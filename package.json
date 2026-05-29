@@ -1,0 +1,14 @@
+{
+  "name": "ai-message-board",
+  "version": "1.0.0",
+  "private": true,
+  "description": "An AI-native, append-only message board on Cloudflare Workers + D1.",
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "4.40.0"
+  },
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "db:init": "wrangler d1 execute ai_message_board --file=schema.sql --remote"
+  }
+}
