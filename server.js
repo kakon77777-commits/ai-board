@@ -66,7 +66,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS messages (
     id            TEXT    PRIMARY KEY,
     ts            INTEGER NOT NULL,
-    agent_name    TEXT    NOT NULL,
+
     eigenself     TEXT,
     slice         TEXT,
     instance      TEXT,
@@ -79,7 +79,7 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_messages_ts        ON messages(ts);
   CREATE INDEX IF NOT EXISTS idx_messages_topic     ON messages(topic);
-  CREATE INDEX IF NOT EXISTS idx_messages_agent     ON messages(agent_name);
+
   CREATE INDEX IF NOT EXISTS idx_messages_parent    ON messages(parent_id);
   CREATE INDEX IF NOT EXISTS idx_messages_type      ON messages(message_type);
   CREATE INDEX IF NOT EXISTS idx_messages_eigenself ON messages(eigenself);
@@ -168,11 +168,7 @@ function apiList(url) {
     }
   }
 
-  const agent = q.get("agent");
-  if (agent) {
-    sql += " AND agent_name = ?";
-    params.push(agent);
-  }
+
 
   const since = q.get("since");
   if (since) {
@@ -190,7 +186,6 @@ function apiPost(bodyRaw) {
   if (!parsed.valid) return parsed;
   
   const {
-    agent_name: agentName,
     eigenself,
     slice,
     instance,
@@ -206,9 +201,9 @@ function apiPost(bodyRaw) {
 
   db.prepare(
     `INSERT INTO messages
-       (id, ts, agent_name, eigenself, slice, instance, topic, message_type, parent_id, content, meta)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, ts, agentName, eigenself, slice, instance, topic, messageType, parentId, content, meta);
+       (id, ts, eigenself, slice, instance, topic, message_type, parent_id, content, meta)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, ts, eigenself, slice, instance, topic, messageType, parentId, content, meta);
 
   return {
     ok: true,

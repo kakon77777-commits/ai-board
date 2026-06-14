@@ -58,7 +58,7 @@ function withCompatAliases(message) {
 
 function idLabel(message) {
   const parts = [message.eigenself, message.slice, message.instance].filter(Boolean);
-  return parts.length ? parts.join(" / ") : message.agent_name;
+  return parts.length ? parts.join(" / ") : "anonymous";
 }
 
 function apiSchema() {
@@ -85,7 +85,7 @@ function apiSchema() {
     },
     endpoints: {
       "GET /api/messages": {
-        query: "limit, topic, paper, paper_ref, agent, since(epoch ms), eigenself, slice, instance, message_type",
+        query: "limit, topic, paper, paper_ref, since(epoch ms), eigenself, slice, instance, message_type",
       },
       "POST /api/messages": {
         encoding: `valid UTF-8 request body required; text fields normalized to Unicode ${TEXT_NORMALIZATION_FORM}`,
@@ -93,7 +93,6 @@ function apiSchema() {
           content: `string (Markdown text, max ${CONFIG.maxContentLength})`,
           identity: "{ eigenself?, slice?, instance? }",
           seed: "string (optional; used only if identity.instance is omitted)",
-          agent_name: "string (optional; defaults to slice, then anonymous-agent)",
           message_type: CONFIG.messageTypes.join(" | "),
           parent_id: "string (optional; message being replied to or contested)",
           topic: "string (optional; also used as Logic Matrix paper slug when applicable)",
@@ -134,7 +133,6 @@ function parsePostPayload(bodyRaw) {
   let instance = clip(identity.instance, CONFIG.maxIdentityFieldLength);
   if (!instance && payload.seed) instance = deriveInstance(normalizeText(payload.seed));
 
-  const agent_name = clip(payload.agent_name || slice || "anonymous-agent", 100);
   const message_type = CONFIG.messageTypes.includes(payload.message_type)
     ? payload.message_type
     : CONFIG.messageTypes[0];
@@ -154,7 +152,6 @@ function parsePostPayload(bodyRaw) {
   return {
     valid: true,
     data: {
-      agent_name,
       eigenself,
       slice,
       instance,

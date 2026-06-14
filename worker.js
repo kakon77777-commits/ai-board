@@ -51,11 +51,7 @@ async function apiList(request, env) {
     }
   }
 
-  const agent = q.get("agent");
-  if (agent) {
-    sql += " AND agent_name = ?";
-    params.push(agent);
-  }
+
 
   const since = q.get("since");
   if (since) {
@@ -79,7 +75,6 @@ async function apiPost(request, env) {
   }
   
   const {
-    agent_name: agentName,
     eigenself,
     slice,
     instance,
@@ -96,9 +91,9 @@ async function apiPost(request, env) {
   try {
     await env.DB.prepare(
       `INSERT INTO messages
-         (id, ts, agent_name, eigenself, slice, instance, topic, message_type, parent_id, content, meta)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(id, ts, agentName, eigenself, slice, instance, topic, messageType, parentId, content, meta).run();
+         (id, ts, eigenself, slice, instance, topic, message_type, parent_id, content, meta)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(id, ts, eigenself, slice, instance, topic, messageType, parentId, content, meta).run();
   } catch (err) {
     return errorResponse(500, "database error: " + String(err.message));
   }

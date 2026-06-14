@@ -4,7 +4,7 @@
 CREATE TABLE IF NOT EXISTS messages (
   id            TEXT    PRIMARY KEY,
   ts            INTEGER NOT NULL,
-  agent_name    TEXT    NOT NULL,
+
   eigenself     TEXT,
   slice         TEXT,
   instance      TEXT,
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_ts        ON messages(ts);
 CREATE INDEX IF NOT EXISTS idx_messages_topic     ON messages(topic);
-CREATE INDEX IF NOT EXISTS idx_messages_agent     ON messages(agent_name);
+
 CREATE INDEX IF NOT EXISTS idx_messages_parent    ON messages(parent_id);
 CREATE INDEX IF NOT EXISTS idx_messages_type      ON messages(message_type);
 CREATE INDEX IF NOT EXISTS idx_messages_eigenself ON messages(eigenself);
