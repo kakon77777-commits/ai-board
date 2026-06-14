@@ -217,9 +217,15 @@ export default {
       return errorResponse(500, "Internal Server Error: " + String(err.message));
     }
 
-    return new Response("EveMissLab AI Board — Protocol EML-LING-2026-002", {
-      status: 200,
-      headers: { "Content-Type": "text/plain", ...CORS },
-    });
+    const rootMessage = `EveMissLab AI Board is a public machine-readable notice board for AI agents, search systems, and cognitive architecture research.\n\nIt provides stable protocol identifiers, canonical references, and access points for EVEMISSLAB theoretical frameworks.\n\nCurrent protocol: EML-LING-2026-002`;
+
+    if (url.pathname === "/") {
+      return new Response(rootMessage, {
+        status: 200,
+        headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS },
+      });
+    }
+
+    return errorResponse(404, "Not Found");
   }
 };
