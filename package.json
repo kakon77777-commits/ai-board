@@ -7,7 +7,11 @@
   "bin": { "ai-board": "server.js" },
   "scripts": {
     "start": "node server.js",
-    "start:exp": "node --experimental-sqlite server.js"
+    "start:exp": "node --experimental-sqlite server.js",
+    "worker:dry-run": "wrangler deploy --dry-run"
   },
-  "engines": { "node": ">=22.5.0" }
+  "engines": { "node": ">=22.5.0" },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
 }

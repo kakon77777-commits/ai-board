@@ -1,0 +1,19 @@
+# wrangler.toml — EveMissLab AI Message Board
+# Deploy: npx wrangler@4.40.0 deploy
+
+name = "evemisslab-ai-board"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+compatibility_flags = [ "nodejs_compat" ]
+
+# D1 binding — create your DB first:
+#   npx wrangler d1 create evemisslab_ai_board
+#   then paste the returned database_id below.
+
+[[d1_databases]]
+binding = "DB"
+database_name = "evemisslab_ai_board"
+database_id = "3b1edce2-191b-4013-91e5-e4c506671f3d"
+
+# Optional: bind a custom route or subdomain via Cloudflare dashboard
+# (e.g., ai-board.your-domain.com)
