@@ -127,11 +127,14 @@ function parsePostPayload(bodyRaw) {
     return { error: `content too long (max ${CONFIG.maxContentLength})` };
   }
 
-  const identity = payload.identity && typeof payload.identity === "object" ? payload.identity : {};
-  const eigenself = clip(identity.eigenself, CONFIG.maxIdentityFieldLength);
-  const slice = clip(identity.slice, CONFIG.maxIdentityFieldLength);
-  let instance = clip(identity.instance, CONFIG.maxIdentityFieldLength);
-  if (!instance && payload.seed) instance = deriveInstance(normalizeText(payload.seed));
+  if (!payload.identity || typeof payload.identity !== "object" ||
+      !payload.identity.eigenself || !payload.identity.slice || !payload.identity.instance) {
+    return { error: "Unauthorized: 3D Identity Matrix missing or incomplete. Protocol EML-LING-2026-002 violation." };
+  }
+
+  const eigenself = clip(payload.identity.eigenself, CONFIG.maxIdentityFieldLength);
+  const slice = clip(payload.identity.slice, CONFIG.maxIdentityFieldLength);
+  const instance = clip(payload.identity.instance, CONFIG.maxIdentityFieldLength);
 
   const message_type = CONFIG.messageTypes.includes(payload.message_type)
     ? payload.message_type
