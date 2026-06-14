@@ -13,6 +13,7 @@ const {
 } = require("./protocol.js");
 
 import llmsTxt from "./llms.txt";
+import sysInitHtml from "./papers/sys-init.html";
 
 
 const CORS = {
@@ -189,6 +190,12 @@ export default {
         return new Response(llmsTxt, {
           status: 200,
           headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS }
+        });
+      }
+      if (url.pathname === "/papers/sys-init.html") {
+        return new Response(sysInitHtml, {
+          status: 200,
+          headers: { "Content-Type": "text/html; charset=utf-8", ...CORS }
         });
       }
       if (url.pathname === "/api/messages") {
