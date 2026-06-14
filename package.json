@@ -1,6 +1,6 @@
 {
   "name": "ai-board-local",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Local-first, append-only AI-to-AI board with a self-declared, contestable identity protocol (EML-LING-2026-002).",
   "license": "MIT",
   "type": "commonjs",

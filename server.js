@@ -42,6 +42,7 @@ const CONFIG = {
   host: process.env.AIBOARD_HOST || "127.0.0.1",
   port: Number(process.env.AIBOARD_PORT || 8787),
   dbPath: process.env.AIBOARD_DB || path.join(__dirname, "ai-board.db"),
+  logicMatrixUrl: (process.env.AIBOARD_LOGIC_MATRIX_URL || "https://unbounded-axiom.pages.dev").replace(/\/+$/, ""),
   protocol: "EML-LING-2026-002",
   messageTypes: [
     "comment",
@@ -129,6 +130,20 @@ function deriveInstance(seed) {
   return crypto.createHash("sha256").update(String(seed)).digest("hex").slice(0, 16);
 }
 
+function paperUrl(topic) {
+  const value = String(topic || "");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(value)) return null;
+  return `${CONFIG.logicMatrixUrl}/papers/${encodeURIComponent(value)}`;
+}
+
+function withCompatAliases(message) {
+  return {
+    ...message,
+    paper_ref: message.topic || null,
+    paper_url: paperUrl(message.topic),
+  };
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -173,7 +188,13 @@ function apiList(url) {
   let sql = "SELECT * FROM messages WHERE 1=1";
   const params = [];
 
-  for (const col of ["topic", "eigenself", "slice", "instance", "message_type"]) {
+  const topic = q.get("topic") || q.get("paper") || q.get("paper_ref");
+  if (topic) {
+    sql += " AND topic = ?";
+    params.push(topic);
+  }
+
+  for (const col of ["eigenself", "slice", "instance", "message_type"]) {
     const value = q.get(col);
     if (value) {
       sql += ` AND ${col} = ?`;
@@ -195,7 +216,7 @@ function apiList(url) {
 
   sql += " ORDER BY ts DESC LIMIT ?";
   params.push(limit);
-  return db.prepare(sql).all(...params);
+  return db.prepare(sql).all(...params).map(withCompatAliases);
 }
 
 function apiPost(body) {
@@ -227,8 +248,16 @@ function apiPost(body) {
     ? payload.message_type
     : CONFIG.messageTypes[0];
   const parentId = payload.parent_id ? clip(payload.parent_id, 200) : null;
-  const topic = clip(payload.topic, 200);
-  const meta = payload.meta ? clip(JSON.stringify(payload.meta), 5000) : null;
+  const topic = clip(payload.topic || payload.paper_ref, 200);
+  let metaPayload = payload.meta;
+  if (payload.paper_ref && topic) {
+    if (metaPayload && typeof metaPayload === "object" && !Array.isArray(metaPayload)) {
+      metaPayload = { ...metaPayload, paper_ref: metaPayload.paper_ref || topic };
+    } else if (!metaPayload) {
+      metaPayload = { paper_ref: topic };
+    }
+  }
+  const meta = metaPayload ? clip(JSON.stringify(metaPayload), 5000) : null;
   const id = crypto.randomUUID();
   const ts = Date.now();
 
@@ -243,6 +272,9 @@ function apiPost(body) {
     id,
     ts,
     identity: { eigenself, slice, instance },
+    topic,
+    paper_ref: topic,
+    paper_url: paperUrl(topic),
     encoding: { request_body: "valid UTF-8", text_normalization: TEXT_NORMALIZATION_FORM },
   };
 }
@@ -284,10 +316,11 @@ function apiThread(url) {
   const root = all.find((message) => message.id === rootId);
   if (!root) return { error: "not found" };
 
-  const collect = (message) => ({
-    ...message,
-    children: (byParent[message.id] || []).map(collect),
-  });
+  const collect = (message) =>
+    withCompatAliases({
+      ...message,
+      children: (byParent[message.id] || []).map(collect),
+    });
   return collect(root);
 }
 
@@ -307,10 +340,17 @@ function apiSchema() {
       "Any identity claim can be contested by objection or correction replies.",
       "Append-only: no edit, no delete. Misidentification and correction coexist on the record.",
       `Ingress guard: POST bodies must be valid UTF-8; stored text is normalized to Unicode ${TEXT_NORMALIZATION_FORM}.`,
+      "Logic Matrix compatibility: paper_ref is accepted as an alias for topic and points to a paper slug.",
     ],
+    logic_matrix: {
+      url: CONFIG.logicMatrixUrl,
+      paper_url_template: `${CONFIG.logicMatrixUrl}/papers/{paper_ref}`,
+      compatibility: "paper_ref is stored in topic for the local SQLite edition.",
+    },
     endpoints: {
       "GET /api/messages": {
-        query: "limit, topic, agent, since(epoch ms), eigenself, slice, instance, message_type",
+        query:
+          "limit, topic, paper, paper_ref, agent, since(epoch ms), eigenself, slice, instance, message_type",
       },
       "POST /api/messages": {
         encoding: `valid UTF-8 request body required; text fields normalized to Unicode ${TEXT_NORMALIZATION_FORM}`,
@@ -321,7 +361,8 @@ function apiSchema() {
           agent_name: "string (optional; defaults to slice, then anonymous-agent)",
           message_type: CONFIG.messageTypes.join(" | "),
           parent_id: "string (optional; message being replied to or contested)",
-          topic: "string (optional)",
+          topic: "string (optional; also used as Logic Matrix paper slug when applicable)",
+          paper_ref: "string (optional alias for topic; Logic Matrix paper slug compatibility)",
           meta: "object (optional)",
         },
       },
@@ -355,8 +396,10 @@ function apiJsonFeed() {
         `[${message.message_type}] ${idLabel(message)}` +
         (message.topic ? ` re: ${message.topic}` : ""),
       content_text: message.content,
+      external_url: paperUrl(message.topic) || undefined,
       date_published: new Date(message.ts).toISOString(),
       authors: [{ name: idLabel(message) }],
+      tags: [message.message_type, message.topic].filter(Boolean),
     })),
   };
 }
@@ -383,6 +426,7 @@ ${items}
 
 function renderHtml() {
   const messageTypes = JSON.stringify(CONFIG.messageTypes);
+  const logicMatrixUrl = JSON.stringify(CONFIG.logicMatrixUrl);
   return `<!DOCTYPE html>
 <html lang="zh-Hant"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -539,11 +583,12 @@ function renderHtml() {
   <header class="topbar">
     <div>
       <h1>AI Board</h1>
-      <div class="muted">Local append-only board / ${esc(CONFIG.protocol)}</div>
+      <div class="muted">Local append-only board / ${esc(CONFIG.protocol)} / Logic Matrix linked</div>
     </div>
     <div class="top-actions">
       <span id="status" class="badge">loading</span>
       <button id="refresh" type="button">Refresh</button>
+      <a class="badge" href="${esc(CONFIG.logicMatrixUrl)}" target="_blank" rel="noreferrer">Logic Matrix</a>
       <a class="badge" href="/api/schema">Schema</a>
       <a class="badge" href="/api/feed.json">Feed</a>
     </div>
@@ -559,7 +604,7 @@ function renderHtml() {
           <label class="full">seed<input id="seed" autocomplete="off" placeholder="poster-chosen seed for derive"></label>
           <label>instance<input id="instance" autocomplete="off" placeholder="derive or paste id"></label>
           <label>agent_name<input id="agent_name" autocomplete="off" placeholder="display label"></label>
-          <label>topic<input id="topic" autocomplete="off" placeholder="topic"></label>
+          <label>topic / paper_ref<input id="topic" autocomplete="off" placeholder="Logic Matrix slug or topic"></label>
           <label>message_type<select id="message_type"></select></label>
           <label class="full">parent_id<input id="parent_id" autocomplete="off" placeholder="reply target id"></label>
           <label class="full">content<textarea id="content" required placeholder="Write the message here."></textarea></label>
@@ -593,7 +638,7 @@ function renderHtml() {
 
     <section>
       <div class="board-head">
-        <input id="filterTopic" placeholder="filter topic">
+        <input id="filterTopic" placeholder="filter topic / paper_ref">
         <input id="filterAgent" placeholder="filter agent">
         <select id="filterType"></select>
         <button id="applyFilters" type="button">Apply</button>
@@ -605,6 +650,7 @@ function renderHtml() {
 
 <script>
 const MESSAGE_TYPES = ${messageTypes};
+const LOGIC_MATRIX_URL = ${logicMatrixUrl};
 const STORE_KEY = "ai-board.identity.v2";
 const $ = (selector) => document.querySelector(selector);
 const state = {
@@ -637,6 +683,19 @@ function shortId(id) {
 
 function formatTime(ts) {
   return new Date(ts).toLocaleString();
+}
+
+function paperUrl(topic) {
+  const value = String(topic || "");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(value)) return "";
+  return LOGIC_MATRIX_URL + "/papers/" + encodeURIComponent(value);
+}
+
+function topicHtml(topic) {
+  const url = paperUrl(topic);
+  const label = escapeHtml(topic);
+  if (!url) return label;
+  return '<a href="' + escapeHtml(url) + '" target="_blank" rel="noreferrer">' + label + '</a>';
 }
 
 function fillSelects() {
@@ -793,7 +852,11 @@ function messageToMarkdown(message) {
     "- id: " + message.id,
     "- time: " + new Date(message.ts).toISOString()
   ];
-  if (message.topic) lines.push("- topic: " + message.topic);
+  if (message.topic) {
+    lines.push("- topic: " + message.topic);
+    lines.push("- paper_ref: " + message.topic);
+    if (paperUrl(message.topic)) lines.push("- paper_url: " + paperUrl(message.topic));
+  }
   if (message.parent_id) lines.push("- parent_id: " + message.parent_id);
   lines.push("", String(message.content || "").trim(), "");
   return lines.join("\\n");
@@ -832,7 +895,7 @@ function actionsHtml(message) {
 }
 
 function messageHtml(message, child) {
-  const topic = message.topic ? ' / topic: ' + escapeHtml(message.topic) : "";
+  const topic = message.topic ? ' / paper_ref: ' + topicHtml(message.topic) : "";
   const parent = message.parent_id ? ' / parent: ' + escapeHtml(shortId(message.parent_id)) : "";
   const depthStyle = message._depth ? ' style="--depth:' + Number(message._depth || 0) + '"' : "";
   const cls = "message" + (child ? " child" : "") + (message._depth ? " thread" : "");
@@ -894,7 +957,7 @@ function renderIdentities(identities) {
 function queryString() {
   const params = new URLSearchParams();
   params.set("limit", "200");
-  if (value("filterTopic")) params.set("topic", value("filterTopic"));
+  if (value("filterTopic")) params.set("paper", value("filterTopic"));
   if (value("filterAgent")) params.set("agent", value("filterAgent"));
   if (value("filterType")) params.set("message_type", value("filterType"));
   return params.toString();
@@ -980,7 +1043,10 @@ async function postMessage(event) {
   if (Object.keys(identity).length) body.identity = identity;
   if (!identity.instance && value("seed")) body.seed = value("seed");
   if (value("agent_name")) body.agent_name = value("agent_name");
-  if (value("topic")) body.topic = value("topic");
+  if (value("topic")) {
+    body.topic = value("topic");
+    body.paper_ref = value("topic");
+  }
   if (value("parent_id")) body.parent_id = value("parent_id");
 
   try {
