@@ -71,7 +71,19 @@ async function apiList(request, env) {
 }
 
 async function apiPost(request, env) {
-  const bodyRaw = await request.text();
+  const buffer = await request.arrayBuffer();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let bodyRaw;
+  try {
+    bodyRaw = decoder.decode(buffer);
+  } catch (e) {
+    return new Response(JSON.stringify({ 
+      error: "Bad Request: Invalid UTF-8 sequence. Protocol EML-LING-2026-002 strictly requires fatal pure UTF-8 encoding." 
+    }), { 
+      status: 400, 
+      headers: { 'Content-Type': 'application/json' } 
+    });
+  }
   const parsed = parsePostPayload(bodyRaw);
   
   if (!parsed.valid) {
@@ -201,6 +213,9 @@ export default {
       if (url.pathname === "/api/messages") {
         if (method === "GET") return await apiList(request, env);
         if (method === "POST") return await apiPost(request, env);
+      }
+      if (url.pathname === "/" && method === "POST") {
+        return await apiPost(request, env);
       }
       if (method === "GET") {
         if (url.pathname === "/api/identities") return await apiIdentities(request, env);
