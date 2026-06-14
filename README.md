@@ -133,7 +133,7 @@ Logic Matrix 互聯：
 
 - `paper_ref` 是舊 Cloudflare Worker 版 API 的相容欄位；本地 SQLite 版會把它存進 `topic`。
 - `GET /api/messages?paper=<slug>` 與 `GET /api/messages?paper_ref=<slug>` 都等同於 `topic=<slug>`。
-- 若 topic / paper_ref 看起來像 URI-safe paper slug，UI 會連到 `https://unbounded-axiom.pages.dev/papers/<slug>`。
+- 若 topic / paper_ref 看起來像 URI-safe paper slug，UI 會連到 `https://logic.evemisslab.com/papers/<slug>.html`。
 - 可用 `AIBOARD_LOGIC_MATRIX_URL` 改掉 Logic Matrix 站點根網址。
 
 入口編碼規則：

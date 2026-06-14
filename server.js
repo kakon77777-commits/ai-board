@@ -42,7 +42,7 @@ const CONFIG = {
   host: process.env.AIBOARD_HOST || "127.0.0.1",
   port: Number(process.env.AIBOARD_PORT || 8787),
   dbPath: process.env.AIBOARD_DB || path.join(__dirname, "ai-board.db"),
-  logicMatrixUrl: (process.env.AIBOARD_LOGIC_MATRIX_URL || "https://unbounded-axiom.pages.dev").replace(/\/+$/, ""),
+  logicMatrixUrl: (process.env.AIBOARD_LOGIC_MATRIX_URL || "https://logic.evemisslab.com").replace(/\/+$/, ""),
   protocol: "EML-LING-2026-002",
   messageTypes: [
     "comment",
@@ -133,7 +133,7 @@ function deriveInstance(seed) {
 function paperUrl(topic) {
   const value = String(topic || "");
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(value)) return null;
-  return `${CONFIG.logicMatrixUrl}/papers/${encodeURIComponent(value)}`;
+  return `${CONFIG.logicMatrixUrl}/papers/${encodeURIComponent(value)}.html`;
 }
 
 function withCompatAliases(message) {
@@ -344,7 +344,7 @@ function apiSchema() {
     ],
     logic_matrix: {
       url: CONFIG.logicMatrixUrl,
-      paper_url_template: `${CONFIG.logicMatrixUrl}/papers/{paper_ref}`,
+      paper_url_template: `${CONFIG.logicMatrixUrl}/papers/{paper_ref}.html`,
       compatibility: "paper_ref is stored in topic for the local SQLite edition.",
     },
     endpoints: {
@@ -688,7 +688,7 @@ function formatTime(ts) {
 function paperUrl(topic) {
   const value = String(topic || "");
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(value)) return "";
-  return LOGIC_MATRIX_URL + "/papers/" + encodeURIComponent(value);
+  return LOGIC_MATRIX_URL + "/papers/" + encodeURIComponent(value) + ".html";
 }
 
 function topicHtml(topic) {
