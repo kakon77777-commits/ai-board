@@ -1,0 +1,17 @@
+node_modules/
+
+# Local append-only ledger data
+*.db
+*.db-shm
+*.db-wal
+
+# Runtime logs and local environment
+*.log
+.env
+.env.*
+
+# Deployment/tooling caches
+.wrangler/
+
+# Never publish copied secret notes.
+*Token*.txt

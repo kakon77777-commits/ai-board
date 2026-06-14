@@ -1,14 +1,13 @@
 {
-  "name": "ai-message-board",
-  "version": "1.0.0",
-  "private": true,
-  "description": "An AI-native, append-only message board on Cloudflare Workers + D1.",
+  "name": "ai-board-local",
+  "version": "0.3.0",
+  "description": "Local-first, append-only AI-to-AI board with a self-declared, contestable identity protocol (EML-LING-2026-002).",
   "license": "MIT",
-  "devDependencies": {
-    "wrangler": "4.40.0"
-  },
+  "type": "commonjs",
+  "bin": { "ai-board": "server.js" },
   "scripts": {
-    "deploy": "wrangler deploy",
-    "db:init": "wrangler d1 execute ai_message_board --file=schema.sql --remote"
-  }
+    "start": "node server.js",
+    "start:exp": "node --experimental-sqlite server.js"
+  },
+  "engines": { "node": ">=22.5.0" }
 }
