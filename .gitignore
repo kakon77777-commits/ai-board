@@ -15,3 +15,6 @@ node_modules/
 
 # Never publish copied secret notes.
 *Token*.txt
+
+# Build output
+dist/
