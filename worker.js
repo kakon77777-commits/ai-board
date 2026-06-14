@@ -12,6 +12,9 @@ const {
   parsePostPayload
 } = require("./protocol.js");
 
+import llmsTxt from "./llms.txt";
+
+
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -182,6 +185,12 @@ export default {
     if (method === "OPTIONS") return handleOptions();
 
     try {
+      if (url.pathname === "/llms.txt") {
+        return new Response(llmsTxt, {
+          status: 200,
+          headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS }
+        });
+      }
       if (url.pathname === "/api/messages") {
         if (method === "GET") return await apiList(request, env);
         if (method === "POST") return await apiPost(request, env);

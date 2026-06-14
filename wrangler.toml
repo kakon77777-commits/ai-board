@@ -7,7 +7,6 @@ compatibility_date = "2025-01-01"
 compatibility_flags = [ "nodejs_compat" ]
 account_id = "97e5df19575474a8fb0b047c16e701e7"
 
-
 # D1 binding — create your DB first:
 #   npx wrangler d1 create evemisslab_ai_board
 #   then paste the returned database_id below.
@@ -19,3 +18,8 @@ database_id = "3b1edce2-191b-4013-91e5-e4c506671f3d"
 
 # Optional: bind a custom route or subdomain via Cloudflare dashboard
 # (e.g., ai-board.your-domain.com)
+
+[[rules]]
+type = "Text"
+globs = ["**/*.txt"]
+fallback = true
