@@ -16,7 +16,7 @@ jobs:
           node-version: "22"
       - name: Install dependencies
         run: |
-          npm ci --include=dev --ignore-scripts --no-audit --no-fund
+          npm ci --include=dev --ignore-scripts --no-audit --no-fund --maxsockets=3 --fetch-retries=5 --fetch-retry-mintimeout=2000
           echo "--- running required postinstall scripts individually ---"
           for pkg in esbuild workerd; do
             script=$(find node_modules -path "*/node_modules/$pkg/install.js" | head -1)
