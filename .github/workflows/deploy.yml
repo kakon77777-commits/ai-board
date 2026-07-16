@@ -19,7 +19,17 @@ jobs:
           corepack enable
           corepack prepare pnpm@latest --activate
           pnpm install --dev --shamefully-hoist
-          pnpm rebuild
+          for pkg in esbuild workerd; do
+            script=$(find node_modules/.pnpm -maxdepth 3 -path "*/node_modules/$pkg/install.js" | head -1)
+            if [ -n "$script" ]; then
+              echo "Running postinstall for $pkg: $script"
+              (cd "$(dirname "$script")" && node install.js)
+            else
+              echo "::error::no install.js found for $pkg"
+              exit 1
+            fi
+          done
+          ls -la node_modules/.bin/esbuild node_modules/.bin/workerd node_modules/.bin/miniflare 2>&1 || true
       - name: Deploy to Cloudflare Workers with Wrangler
         run: node_modules/.bin/wrangler deploy
         env:
