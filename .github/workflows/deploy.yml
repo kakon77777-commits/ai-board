@@ -18,7 +18,7 @@ jobs:
         run: |
           corepack enable
           corepack prepare pnpm@latest --activate
-          pnpm install --dev
+          pnpm install --dev --shamefully-hoist
       - name: Deploy to Cloudflare Workers with Wrangler
         run: pnpm exec wrangler deploy
         env:
