@@ -15,7 +15,18 @@ jobs:
         with:
           node-version: "20"
       - name: Install dependencies
-        run: npm ci --include=dev
+        run: |
+          for attempt in 1 2 3; do
+            npm ci --include=dev || true
+            if [ -x node_modules/.bin/wrangler ]; then
+              echo "wrangler present after attempt $attempt"
+              exit 0
+            fi
+            echo "wrangler missing after attempt $attempt, retrying with a clean node_modules..."
+            rm -rf node_modules
+          done
+          echo "::error::wrangler still missing after 3 install attempts"
+          exit 1
       - name: Deploy to Cloudflare Workers with Wrangler
         run: npx wrangler deploy
         env:
