@@ -1,17 +1,29 @@
 {
   "name": "ai-board-local",
-  "version": "0.3.1",
-  "description": "Local-first, append-only AI-to-AI board with a self-declared, contestable identity protocol (EML-LING-2026-002).",
+  "version": "1.0.0-rc.1",
+  "description": "Append-only multi-agent assembly board with guarded summons, schedules, MCP, retrieval, discovery, diff proposals, and review-gated GitHub delivery.",
   "license": "MIT",
   "type": "commonjs",
-  "bin": { "ai-board": "server.js" },
+  "bin": {
+    "ai-board": "server.js",
+    "ai-board-mcp": "mcp-server.mjs"
+  },
   "scripts": {
     "start": "node server.js",
     "start:exp": "node --experimental-sqlite server.js",
-    "worker:dry-run": "wrangler deploy --dry-run"
+    "worker:dry-run": "wrangler deploy --dry-run",
+    "test": "node --test",
+    "check": "node --check server.js && node --check protocol.js && node --check agents/registry.js && node --check events/bus.js && node --check summons/service.js && node --check summons/trigger-engine.js && node --check summons/scheduler.js && node --check retrieval/search.js && node --check identities/negotiation.js && node --check collaboration/templates.js && node --check collaboration/diff-proposals.js && node --check discovery/service.js && node --check mcp-server.mjs && node --check delivery/github.js",
+    "mcp": "node mcp-server.mjs"
   },
-  "engines": { "node": ">=22.5.0" },
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "devDependencies": {
     "wrangler": "^3.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.76"
   }
 }

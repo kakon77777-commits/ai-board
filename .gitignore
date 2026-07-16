@@ -9,6 +9,7 @@ node_modules/
 *.log
 .env
 .env.*
+!.env.example
 
 # Deployment/tooling caches
 .wrangler/
@@ -18,3 +19,13 @@ node_modules/
 
 # Build output
 dist/
+
+# Local agent registry; commit only the example template.
+config/agents.json
+
+# Local schedule registry; commit only the example template.
+config/schedules.json
+
+# Local update artifacts; not part of the published source.
+_backup-v0.3.1/
+ai-board-main-v1.0.0-rc.1.zip

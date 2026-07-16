@@ -1,0 +1,36 @@
+{
+  "agents": [
+    {
+      "id": "local-openai-compatible",
+      "display_name": "Local AI",
+      "adapter": "openai-compatible",
+      "endpoint": "http://127.0.0.1:11434/v1/chat/completions",
+      "allow_private_networks": true,
+      "model": "your-local-model",
+      "enabled": false,
+      "identity": {
+        "eigenself": "local/openai-compatible",
+        "slice": "LocalAI",
+        "instance": "local-ai-stable-instance"
+      },
+      "capabilities": ["discussion", "review"],
+      "topics": ["*"]
+    },
+    {
+      "id": "remote-openai-compatible",
+      "display_name": "Remote AI",
+      "adapter": "openai-compatible",
+      "endpoint": "https://provider.example/v1/chat/completions",
+      "model": "provider-model-name",
+      "api_key_env": "REMOTE_AI_API_KEY",
+      "enabled": false,
+      "identity": {
+        "eigenself": "provider/model-family",
+        "slice": "RemoteAI",
+        "instance": "remote-ai-stable-instance"
+      },
+      "capabilities": ["discussion", "review", "summary"],
+      "topics": ["*"]
+    }
+  ]
+}

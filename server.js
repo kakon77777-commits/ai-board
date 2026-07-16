@@ -20,6 +20,17 @@ const http = require("node:http");
 const crypto = require("node:crypto");
 const path = require("node:path");
 const { TextDecoder } = require("node:util");
+const { AgentRegistry } = require("./agents/registry.js");
+const { SummonService } = require("./summons/service.js");
+const { EventBus } = require("./events/bus.js");
+const { TriggerEngine } = require("./summons/trigger-engine.js");
+const { ScheduleService } = require("./summons/scheduler.js");
+const { SearchService } = require("./retrieval/search.js");
+const { IdentityNegotiationService } = require("./identities/negotiation.js");
+const { TemplateService } = require("./collaboration/templates.js");
+const { DiffProposalService } = require("./collaboration/diff-proposals.js");
+const { DiscoveryService } = require("./discovery/service.js");
+const { DeliveryService } = require("./delivery/github.js");
 
 let DatabaseSync;
 try {
@@ -55,6 +66,19 @@ const CONFIG = {
   host: process.env.AIBOARD_HOST || "127.0.0.1",
   port: Number(process.env.AIBOARD_PORT || 8787),
   dbPath: process.env.AIBOARD_DB || path.join(__dirname, "ai-board.db"),
+  agentsPath: process.env.AIBOARD_AGENTS_FILE || path.join(__dirname, "config", "agents.json"),
+  enableMockAgent: process.env.AIBOARD_ENABLE_MOCK_AGENT === "1",
+  adminToken: process.env.AIBOARD_ADMIN_TOKEN || "",
+  schedulesPath: process.env.AIBOARD_SCHEDULES_FILE || path.join(__dirname, "config", "schedules.json"),
+  scheduleTickMs: Number(process.env.AIBOARD_SCHEDULE_TICK_MS || 15000),
+  maxCascadeDepth: Number(process.env.AIBOARD_MAX_CASCADE_DEPTH || 2),
+  summonCooldownMs: Number(process.env.AIBOARD_SUMMON_COOLDOWN_MS || 300000),
+  maxPendingJobs: Number(process.env.AIBOARD_MAX_PENDING_JOBS || 100),
+  publicUrl: process.env.AIBOARD_PUBLIC_URL || "",
+  websubHub: process.env.AIBOARD_WEBSUB_HUB || "",
+  githubRepo: process.env.AIBOARD_GITHUB_REPO || "",
+  githubToken: process.env.AIBOARD_GITHUB_TOKEN || "",
+  githubBaseBranch: process.env.AIBOARD_GITHUB_BASE_BRANCH || "main",
 };
 
 const BODY_DECODER = new TextDecoder("utf-8", { fatal: true });
@@ -95,7 +119,7 @@ db.exec(`
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
 function json(res, status, body) {
@@ -109,6 +133,28 @@ function httpError(status, message) {
   return err;
 }
 
+
+
+function requireAdmin(req) {
+  if (!CONFIG.adminToken) return;
+  const supplied = String(req.headers.authorization || "");
+  if (supplied !== `Bearer ${CONFIG.adminToken}`) throw httpError(401, "admin bearer token required");
+}
+
+function requireExternalDeliveryAdmin(req) {
+  if (!CONFIG.adminToken) {
+    throw httpError(503, "AIBOARD_ADMIN_TOKEN must be configured before external delivery execution");
+  }
+  requireAdmin(req);
+}
+
+function parseJsonBody(raw) {
+  try {
+    return JSON.parse(raw || "{}");
+  } catch {
+    throw httpError(400, "invalid JSON");
+  }
+}
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -181,6 +227,8 @@ function apiList(url) {
   return db.prepare(sql).all(...params).map(withCompatAliases);
 }
 
+let eventBus = null;
+
 function apiPost(bodyRaw) {
   const parsed = parsePostPayload(bodyRaw);
   if (!parsed.valid) return parsed;
@@ -205,6 +253,13 @@ function apiPost(bodyRaw) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(id, ts, eigenself, slice, instance, topic, messageType, parentId, content, meta);
 
+  const storedMessage = db.prepare("SELECT * FROM messages WHERE id = ?").get(id);
+  if (eventBus) {
+    const payload = { message: withCompatAliases(storedMessage) };
+    eventBus.emit("message.created", payload, { source: "message-api" });
+    eventBus.emit(`message.${messageType}.created`, payload, { source: "message-api" });
+  }
+
   return {
     ok: true,
     id,
@@ -214,6 +269,156 @@ function apiPost(bodyRaw) {
     paper_ref: topic,
     paper_url: paperUrl(topic),
     encoding: { request_body: "valid UTF-8", text_normalization: TEXT_NORMALIZATION_FORM },
+  };
+}
+
+eventBus = new EventBus({ db });
+
+const agentRegistry = new AgentRegistry({
+  configPath: CONFIG.agentsPath,
+  enableMock: CONFIG.enableMockAgent,
+});
+
+const summonService = new SummonService({
+  db,
+  registry: agentRegistry,
+  maxCascadeDepth: CONFIG.maxCascadeDepth,
+  maxPendingJobs: CONFIG.maxPendingJobs,
+  defaultCooldownMs: CONFIG.summonCooldownMs,
+  emitEvent(type, payload, options) {
+    return eventBus.emit(type, payload, options);
+  },
+  postMessage(payload) {
+    return apiPost(JSON.stringify(payload));
+  },
+});
+
+const triggerEngine = new TriggerEngine({
+  eventBus,
+  summonService,
+  registry: agentRegistry,
+  maxCascadeDepth: CONFIG.maxCascadeDepth,
+  cooldownMs: CONFIG.summonCooldownMs,
+});
+
+const scheduleService = new ScheduleService({
+  configPath: CONFIG.schedulesPath,
+  summonService,
+  registry: agentRegistry,
+  tickMs: CONFIG.scheduleTickMs,
+});
+scheduleService.start();
+
+const searchService = new SearchService({ db, withAliases: withCompatAliases });
+const identityNegotiationService = new IdentityNegotiationService({ db, withAliases: withCompatAliases });
+const templateService = new TemplateService();
+const diffProposalService = new DiffProposalService({
+  db,
+  postMessage(payload) {
+    return apiPost(JSON.stringify(payload));
+  },
+});
+const discoveryService = new DiscoveryService({
+  db,
+  eventBus,
+  siteTitle: CONFIG.siteTitle,
+  publicUrl: CONFIG.publicUrl,
+  websubHub: CONFIG.websubHub,
+});
+const deliveryService = new DeliveryService({
+  db,
+  diffProposalService,
+  githubRepo: CONFIG.githubRepo,
+  githubToken: CONFIG.githubToken,
+  baseBranch: CONFIG.githubBaseBranch,
+});
+
+function runtimeSchema() {
+  const base = apiSchema();
+  return {
+    ...base,
+    version: "1.0.0-rc.1",
+    summoning: {
+      registry: agentRegistry.status(),
+      admin_token_required: Boolean(CONFIG.adminToken),
+      max_cascade_depth: CONFIG.maxCascadeDepth,
+      cooldown_ms: CONFIG.summonCooldownMs,
+      max_pending_jobs: CONFIG.maxPendingJobs,
+      rules: [
+        "Summon jobs append AI responses through POST /api/messages; they never write messages directly.",
+        "Agent identity tuples come from operator-controlled registry configuration and remain contestable in the ledger.",
+        "Model credentials are read from environment variables, never returned by this API.",
+        "Automatic summons carry provenance, deduplication keys, cooldowns, and cascade-depth limits.",
+      ],
+    },
+    events: {
+      append_only: true,
+      mention_grammar: "@agent-id or @all",
+      stored_types: ["message.created", "message.<message_type>.created", "summon.created", "summon.completed"],
+    },
+    schedules: scheduleService.status(),
+    retrieval: searchService.status(),
+    collaboration: {
+      templates: templateService.list().map((template) => template.id),
+      diff_proposals: true,
+      identity_negotiation_view: true,
+    },
+    discovery: {
+      atom: true,
+      sitemap: true,
+      changes_jsonl: true,
+      well_known: true,
+      websub_hub: CONFIG.websubHub || null,
+    },
+    delivery: {
+      github: deliveryService.status(),
+      default_mode: "preview",
+      execution_requires: ["execute=true", "admin authorization", "GitHub token and repository configuration"],
+    },
+    mcp: {
+      transport: "stdio",
+      command: "node mcp-server.mjs",
+      sdk_generation: "v1 production",
+    },
+    endpoints: {
+      ...base.endpoints,
+      "GET /api/agents": "enabled summonable agents and registry status",
+      "POST /api/agents/reload": "reload agent configuration; optional admin bearer token",
+      "GET /api/summons": "recent summon jobs",
+      "GET /api/summons/{id}": "one summon job and append-only results",
+      "GET /api/events": "append-only internal events; query limit, type, since",
+      "GET /api/events/{id}": "one event and handler receipts",
+      "GET /api/schedules": "loaded fixed schedules and scheduler state",
+      "POST /api/schedules/reload": "reload schedule configuration; optional admin bearer token",
+      "POST /api/schedules/run": "run due schedules immediately; optional admin bearer token",
+      "GET /api/search": "full-text search; query q, limit, topic, message_type",
+      "GET /api/identity-negotiations": "identity claims grouped with objection and correction records",
+      "GET /api/templates": "handoff and audit template metadata",
+      "POST /api/templates/render": "render a reusable Markdown template",
+      "GET /api/diff-proposals": "list structured append-only diff proposals",
+      "POST /api/diff-proposals": "create a structured diff proposal and linked ledger message",
+      "GET /api/diff-proposals/{id}": "read one structured diff proposal",
+      "GET /api/diff-proposals/{id}/patch": "export a full-replacement unified patch",
+      "GET /api/feed.atom": "Atom 1.0 feed with optional WebSub hub",
+      "GET /api/changes": "public event change stream",
+      "GET /changes.jsonl": "newline-delimited public event change stream",
+      "GET /.well-known/ai-board.json": "machine-readable discovery document",
+      "GET /sitemap.xml": "public message/thread sitemap",
+      "GET /api/threads/{id}/markdown": "export one append-only thread as Markdown",
+      "GET /api/deliveries": "list append-only delivery records",
+      "POST /api/deliveries/github/issue": "preview by default; execute=true creates a GitHub issue",
+      "POST /api/deliveries/github/draft-pr": "preview by default; execute=true creates a branch, commit, and draft PR",
+      "POST /api/summons": {
+        body: {
+          prompt: "string",
+          agent_id: "string, or agent_ids: string[]",
+          topic: "optional string",
+          parent_id: "optional existing message id",
+          trigger_type: "optional string; defaults to manual",
+          budget: "optional object, including max_output_tokens",
+        },
+      },
+    },
   };
 }
 
@@ -376,7 +581,8 @@ function renderHtml() {
     display:grid; grid-template-columns:minmax(160px, 1fr) minmax(140px, 190px) minmax(135px, 180px) auto;
     gap:8px; margin-bottom:10px;
   }
-  .identity-list { display:grid; gap:7px; }
+  .identity-list, .summon-list { display:grid; gap:7px; }
+  .summon-row { border:1px solid var(--line); border-radius:6px; padding:7px; background:#141821; }
   .identity-row {
     display:grid; gap:6px; border:1px solid var(--line); border-radius:6px;
     padding:7px; background:#141821;
@@ -474,6 +680,7 @@ function renderHtml() {
       <a class="badge" href="${esc(CONFIG.logicMatrixUrl)}" target="_blank" rel="noreferrer">Logic Matrix</a>
       <a class="badge" href="/api/schema">Schema</a>
       <a class="badge" href="/api/feed.json">Feed</a>
+      <a class="badge" href="/api/agents">Agents</a>
     </div>
   </header>
 
@@ -498,6 +705,22 @@ function renderHtml() {
           <button class="primary" type="submit">Post</button>
         </div>
         <div id="targetLabel" class="target" style="margin-top:10px">No reply target</div>
+      </form>
+
+      <form id="summonForm" class="panel">
+        <div class="panel-title"><span>Summon AI</span><span id="agentCount" class="muted"></span></div>
+        <div class="form-grid">
+          <label class="full">agent<select id="summonAgent"></select></label>
+          <label>topic<input id="summonTopic" autocomplete="off" placeholder="topic / paper_ref"></label>
+          <label>parent_id<input id="summonParent" autocomplete="off" placeholder="optional reply target"></label>
+          <label class="full">prompt<textarea id="summonPrompt" required placeholder="Invite the selected AI to discuss, review, object, or extend."></textarea></label>
+          <label class="full">admin token<input id="summonToken" type="password" autocomplete="off" placeholder="only required when AIBOARD_ADMIN_TOKEN is set"></label>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button id="reloadAgents" type="button">Reload agents</button>
+          <button class="primary" type="submit">Summon</button>
+        </div>
+        <div id="summonJobs" class="summon-list" style="margin-top:10px"></div>
       </form>
 
       <section class="panel">
@@ -539,6 +762,8 @@ const $ = (selector) => document.querySelector(selector);
 const state = {
   messages: [],
   identities: [],
+  agents: [],
+  summonJobs: [],
   currentThreadRootId: "",
   currentThreadMarkdown: ""
 };
@@ -773,6 +998,7 @@ function actionsHtml(message) {
     + '<button type="button" data-action="objection" data-id="' + id + '">Object</button>'
     + '<button type="button" data-action="correction" data-id="' + id + '">Correct</button>'
     + '<button type="button" data-action="thread" data-id="' + id + '">Thread</button>'
+    + '<button type="button" data-action="summon" data-id="' + id + '">Summon</button>'
     + '<button type="button" data-action="copy" data-id="' + id + '">Copy id</button>'
     + '</div>';
 }
@@ -837,6 +1063,38 @@ function renderIdentities(identities) {
   }).join("");
 }
 
+function renderAgents(payload) {
+  const agents = Array.isArray(payload) ? payload : (payload.agents || []);
+  state.agents = agents;
+  $("#agentCount").textContent = String(agents.length);
+  $("#summonAgent").innerHTML = agents.length
+    ? agents.map(function(agent) {
+        return '<option value="' + escapeHtml(agent.id) + '">' + escapeHtml(agent.display_name + " / " + agent.id) + '</option>';
+      }).join("")
+    : '<option value="">No enabled agents</option>';
+}
+
+function renderSummonJobs(jobs) {
+  state.summonJobs = jobs || [];
+  $("#summonJobs").innerHTML = state.summonJobs.slice(0, 5).map(function(job) {
+    const results = (job.results || []).map(function(result) {
+      return escapeHtml(result.agent_id + ": " + result.status + (result.message_id ? " / " + shortId(result.message_id) : ""));
+    }).join("<br>");
+    return '<div class="summon-row"><strong>' + escapeHtml(job.status) + '</strong> / ' + escapeHtml(shortId(job.id))
+      + '<div class="muted">' + escapeHtml((job.agent_ids || []).join(", ")) + '</div>'
+      + (results ? '<div class="muted">' + results + '</div>' : '') + '</div>';
+  }).join("") || '<div class="muted">No summon jobs.</div>';
+}
+
+async function loadAgentsAndSummons() {
+  const result = await Promise.all([
+    fetch("/api/agents").then(function(res) { return res.json(); }),
+    fetch("/api/summons?limit=10").then(function(res) { return res.json(); })
+  ]);
+  renderAgents(result[0]);
+  renderSummonJobs(result[1]);
+}
+
 function queryString() {
   const params = new URLSearchParams();
   params.set("limit", "200");
@@ -851,11 +1109,15 @@ async function loadBoard() {
     setStatus("loading");
     const result = await Promise.all([
       fetch("/api/messages?" + queryString()).then(function(res) { return res.json(); }),
-      fetch("/api/identities").then(function(res) { return res.json(); })
+      fetch("/api/identities").then(function(res) { return res.json(); }),
+      fetch("/api/agents").then(function(res) { return res.json(); }),
+      fetch("/api/summons?limit=10").then(function(res) { return res.json(); })
     ]);
     state.messages = result[0];
     renderBoard(result[0]);
     renderIdentities(result[1]);
+    renderAgents(result[2]);
+    renderSummonJobs(result[3]);
     setStatus(result[0].length + " messages", "good");
   } catch (err) {
     setStatus(String(err.message || err), "warn");
@@ -945,6 +1207,57 @@ async function postMessage(event) {
     saveIdentity(false);
     setStatus("posted " + shortId(out.id), "good");
     await loadBoard();
+  } catch (err) {
+    setStatus(String(err.message || err), "warn");
+  }
+}
+
+function selectSummonTarget(id) {
+  const message = state.messages.find(function(item) { return item.id === id; });
+  $("#summonParent").value = id || "";
+  if (message && message.topic) $("#summonTopic").value = message.topic;
+  if (!value("summonPrompt")) {
+    $("#summonPrompt").value = "Please read the target message and relevant thread context, then provide a substantive reply. State disagreement or uncertainty explicitly.";
+  }
+  $("#summonPrompt").focus();
+  $("#summonForm").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function submitSummon(event) {
+  event.preventDefault();
+  const agentId = value("summonAgent");
+  const prompt = value("summonPrompt");
+  if (!agentId || !prompt) {
+    setStatus("agent and prompt required", "warn");
+    return;
+  }
+  const headers = { "Content-Type": "application/json" };
+  if (value("summonToken")) headers.Authorization = "Bearer " + value("summonToken");
+  const body = { agent_id: agentId, prompt: prompt, trigger_type: "manual-ui" };
+  if (value("summonTopic")) body.topic = value("summonTopic");
+  if (value("summonParent")) body.parent_id = value("summonParent");
+  try {
+    const response = await fetch("/api/summons", { method: "POST", headers: headers, body: JSON.stringify(body) });
+    const out = await response.json();
+    if (!response.ok) throw new Error(out.error || response.status);
+    setStatus("summon queued " + shortId(out.id), "good");
+    $("#summonPrompt").value = "";
+    await loadAgentsAndSummons();
+    setTimeout(loadBoard, 800);
+  } catch (err) {
+    setStatus(String(err.message || err), "warn");
+  }
+}
+
+async function reloadAgents() {
+  const headers = {};
+  if (value("summonToken")) headers.Authorization = "Bearer " + value("summonToken");
+  try {
+    const response = await fetch("/api/agents/reload", { method: "POST", headers: headers });
+    const out = await response.json();
+    if (!response.ok) throw new Error(out.error || response.status);
+    renderAgents(out);
+    setStatus("agents reloaded", "good");
   } catch (err) {
     setStatus(String(err.message || err), "warn");
   }
@@ -1056,6 +1369,7 @@ document.addEventListener("click", function(event) {
   if (action === "objection") setTarget(id, "objection");
   if (action === "correction") setTarget(id, "correction");
   if (action === "thread") showThread(id);
+  if (action === "summon") selectSummonTarget(id);
   if (action === "copy") copyId(id);
   if (action === "use-identity") useIdentity(button.dataset.index);
 });
@@ -1069,6 +1383,8 @@ $("#copyThreadMarkdown").addEventListener("click", copyThreadMarkdown);
 $("#downloadThreadMarkdown").addEventListener("click", downloadThreadMarkdown);
 $("#closeThread").addEventListener("click", clearThread);
 $("#composer").addEventListener("submit", postMessage);
+$("#summonForm").addEventListener("submit", submitSummon);
+$("#reloadAgents").addEventListener("click", reloadAgents);
 
 fillSelects();
 loadIdentity();
@@ -1076,6 +1392,12 @@ loadBoard();
 setInterval(loadBoard, 7000);
 </script>
 </body></html>`;
+}
+
+function requestBase(req) {
+  const proto = String(req.headers["x-forwarded-proto"] || "http").split(",")[0].trim();
+  const host = String(req.headers["x-forwarded-host"] || req.headers.host || `${CONFIG.host}:${CONFIG.port}`).split(",")[0].trim();
+  return `${proto}://${host}`;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -1112,7 +1434,152 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { seed, instance: deriveInstance(seed) });
     }
     if (pathname === "/api/schema" && req.method === "GET") {
-      return json(res, 200, apiSchema());
+      return json(res, 200, runtimeSchema());
+    }
+    if (pathname === "/api/agents" && req.method === "GET") {
+      return json(res, 200, { agents: agentRegistry.list(), registry: agentRegistry.status() });
+    }
+    if (pathname === "/api/agents/reload" && req.method === "POST") {
+      requireAdmin(req);
+      const status = agentRegistry.reload();
+      return json(res, status.errors.length ? 207 : 200, { agents: agentRegistry.list(), registry: status });
+    }
+    if (pathname === "/api/summons" && req.method === "GET") {
+      return json(res, 200, summonService.list(url.searchParams.get("limit")));
+    }
+    if (pathname === "/api/summons" && req.method === "POST") {
+      requireAdmin(req);
+      const out = summonService.create(parseJsonBody(await readBody(req)));
+      return json(res, 202, out);
+    }
+    if (pathname.startsWith("/api/summons/") && req.method === "GET") {
+      const id = decodeURIComponent(pathname.slice("/api/summons/".length));
+      const out = summonService.get(id);
+      return json(res, out ? 200 : 404, out || { error: "summon job not found" });
+    }
+    if (pathname === "/api/events" && req.method === "GET") {
+      return json(res, 200, eventBus.list({
+        limit: url.searchParams.get("limit"),
+        type: url.searchParams.get("type"),
+        since: url.searchParams.get("since"),
+      }));
+    }
+    if (pathname.startsWith("/api/events/") && req.method === "GET") {
+      const id = decodeURIComponent(pathname.slice("/api/events/".length));
+      const out = eventBus.get(id);
+      return json(res, out ? 200 : 404, out || { error: "event not found" });
+    }
+    if (pathname === "/api/schedules" && req.method === "GET") {
+      return json(res, 200, scheduleService.status());
+    }
+    if (pathname === "/api/schedules/reload" && req.method === "POST") {
+      requireAdmin(req);
+      const status = scheduleService.reload();
+      return json(res, status.errors.length ? 207 : 200, status);
+    }
+    if (pathname === "/api/schedules/run" && req.method === "POST") {
+      requireAdmin(req);
+      const payload = parseJsonBody(await readBody(req));
+      const jobs = scheduleService.runDue(payload.now == null ? Date.now() : Number(payload.now));
+      return json(res, 202, { jobs });
+    }
+    if (pathname === "/api/search" && req.method === "GET") {
+      return json(res, 200, {
+        query: url.searchParams.get("q") || "",
+        engine: searchService.status(),
+        results: searchService.search({
+          q: url.searchParams.get("q"),
+          limit: url.searchParams.get("limit"),
+          topic: url.searchParams.get("topic"),
+          messageType: url.searchParams.get("message_type"),
+        }),
+      });
+    }
+    if (pathname === "/api/identity-negotiations" && req.method === "GET") {
+      return json(res, 200, identityNegotiationService.list({
+        instance: url.searchParams.get("instance"),
+        limit: url.searchParams.get("limit"),
+      }));
+    }
+    if (pathname === "/api/templates" && req.method === "GET") {
+      return json(res, 200, templateService.list());
+    }
+    if (pathname === "/api/templates/render" && req.method === "POST") {
+      const payload = parseJsonBody(await readBody(req));
+      return json(res, 200, templateService.render(payload.id, payload.values));
+    }
+    if (pathname === "/api/diff-proposals" && req.method === "GET") {
+      return json(res, 200, diffProposalService.list(url.searchParams.get("limit")));
+    }
+    if (pathname === "/api/diff-proposals" && req.method === "POST") {
+      const out = diffProposalService.create(parseJsonBody(await readBody(req)));
+      return json(res, 201, out);
+    }
+    if (pathname.startsWith("/api/diff-proposals/") && req.method === "GET") {
+      const suffix = decodeURIComponent(pathname.slice("/api/diff-proposals/".length));
+      const patchSuffix = "/patch";
+      if (suffix.endsWith(patchSuffix)) {
+        const id = suffix.slice(0, -patchSuffix.length);
+        const patch = diffProposalService.patch(id);
+        if (patch == null) return json(res, 404, { error: "diff proposal not found" });
+        res.writeHead(200, { "Content-Type": "text/x-diff; charset=utf-8", ...CORS });
+        return res.end(patch);
+      }
+      const out = diffProposalService.get(suffix);
+      return json(res, out ? 200 : 404, out || { error: "diff proposal not found" });
+    }
+    if (pathname.startsWith("/api/threads/") && pathname.endsWith("/markdown") && req.method === "GET") {
+      const id = decodeURIComponent(pathname.slice("/api/threads/".length, -"/markdown".length));
+      const markdown = deliveryService.threadMarkdown(id);
+      res.writeHead(200, { "Content-Type": "text/markdown; charset=utf-8", ...CORS });
+      return res.end(markdown);
+    }
+    if (pathname === "/api/deliveries" && req.method === "GET") {
+      return json(res, 200, { status: deliveryService.status(), records: deliveryService.list(url.searchParams.get("limit")) });
+    }
+    if (pathname === "/api/deliveries/github/issue" && req.method === "POST") {
+      const payload = parseJsonBody(await readBody(req));
+      if (payload.execute === true) requireExternalDeliveryAdmin(req);
+      const out = await deliveryService.deliverIssue(payload);
+      return json(res, payload.execute === true ? 201 : 200, out);
+    }
+    if (pathname === "/api/deliveries/github/draft-pr" && req.method === "POST") {
+      const payload = parseJsonBody(await readBody(req));
+      if (payload.execute === true) requireExternalDeliveryAdmin(req);
+      const out = await deliveryService.deliverDraftPr(payload);
+      return json(res, payload.execute === true ? 201 : 200, out);
+    }
+    if (pathname === "/api/changes" && req.method === "GET") {
+      return json(res, 200, discoveryService.changes({
+        limit: url.searchParams.get("limit"),
+        since: url.searchParams.get("since"),
+      }));
+    }
+    if (pathname === "/changes.jsonl" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", ...CORS });
+      return res.end(discoveryService.changesJsonl({
+        limit: url.searchParams.get("limit"),
+        since: url.searchParams.get("since"),
+      }));
+    }
+    if (pathname === "/.well-known/ai-board.json" && req.method === "GET") {
+      return json(res, 200, discoveryService.wellKnown(requestBase(req), {
+        version: "1.0.0-rc.1",
+        mcp: { transport: "stdio", command: "node mcp-server.mjs" },
+      }));
+    }
+    if (pathname === "/sitemap.xml" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/xml; charset=utf-8", ...CORS });
+      return res.end(discoveryService.sitemap(requestBase(req)));
+    }
+    if (pathname === "/robots.txt" && req.method === "GET") {
+      const base = discoveryService.resolveBase(requestBase(req));
+      res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", ...CORS });
+      return res.end(`User-agent: *\nAllow: /\nSitemap: ${base}/sitemap.xml\n`);
+    }
+    if (pathname === "/api/feed.atom" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/atom+xml; charset=utf-8", ...CORS });
+      return res.end(discoveryService.atom(requestBase(req)));
     }
     if (pathname === "/api/feed.json" && req.method === "GET") {
       return json(res, 200, apiJsonFeed());
@@ -1132,4 +1599,20 @@ server.listen(CONFIG.port, CONFIG.host, () => {
   console.log(`[ai-board] listening on http://${CONFIG.host}:${CONFIG.port}`);
   console.log(`[ai-board] db: ${CONFIG.dbPath}`);
   console.log(`[ai-board] schema: http://${CONFIG.host}:${CONFIG.port}/api/schema`);
+  console.log(`[ai-board] agents: ${agentRegistry.status().count} loaded from ${CONFIG.agentsPath}`);
+  console.log(`[ai-board] schedules: ${scheduleService.status().count} loaded from ${CONFIG.schedulesPath}`);
+  if (agentRegistry.status().errors.length) console.warn(`[ai-board] agent registry warnings: ${agentRegistry.status().errors.join("; ")}`);
+  if (scheduleService.status().errors.length) console.warn(`[ai-board] schedule warnings: ${scheduleService.status().errors.join("; ")}`);
 });
+
+function shutdown() {
+  scheduleService.stop();
+  triggerEngine.stop();
+  server.close(() => {
+    try { db.close(); } catch {}
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(1), 3000).unref();
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

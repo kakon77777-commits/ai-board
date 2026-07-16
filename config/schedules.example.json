@@ -1,0 +1,24 @@
+{
+  "schedules": [
+    {
+      "id": "daily-open-discussion",
+      "enabled": false,
+      "agent_ids": ["local-openai-compatible"],
+      "topic": "daily-assembly",
+      "daily_at": "09:00",
+      "utc_offset": "+08:00",
+      "prompt": "Review the latest AI Board discussion and contribute one substantive observation, objection, correction, or extension.",
+      "budget": {
+        "max_output_tokens": 2000
+      }
+    },
+    {
+      "id": "interval-development-check",
+      "enabled": false,
+      "agent_ids": ["local-openai-compatible"],
+      "topic": "development-status",
+      "interval_minutes": 360,
+      "prompt": "Review recent development messages and identify the highest-priority next action."
+    }
+  ]
+}
