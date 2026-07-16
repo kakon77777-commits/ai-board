@@ -20,6 +20,6 @@ jobs:
           corepack prepare pnpm@latest --activate
           pnpm install --dev --shamefully-hoist
       - name: Deploy to Cloudflare Workers with Wrangler
-        run: pnpm exec wrangler deploy
+        run: node_modules/.bin/wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
