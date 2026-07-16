@@ -20,7 +20,7 @@ jobs:
           corepack prepare pnpm@latest --activate
           pnpm install --dev --shamefully-hoist
           for pkg in esbuild workerd; do
-            script=$(find node_modules/.pnpm -maxdepth 3 -path "*/node_modules/$pkg/install.js" | head -1)
+            script=$(find node_modules/.pnpm -maxdepth 5 -path "*/node_modules/$pkg/install.js" | head -1)
             if [ -n "$script" ]; then
               echo "Running postinstall for $pkg: $script"
               (cd "$(dirname "$script")" && node install.js)
