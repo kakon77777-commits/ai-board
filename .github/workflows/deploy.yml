@@ -14,14 +14,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Install dependencies with pnpm
+      - name: Install dependencies
         run: |
-          corepack enable
-          corepack prepare pnpm@latest --activate
-          pnpm install --dev --shamefully-hoist
-          echo "--- diagnostic: full tree of esbuild's pnpm store entry ---"
-          find node_modules/.pnpm -maxdepth 1 -iname "esbuild@*"
-          find node_modules/.pnpm -maxdepth 1 -iname "esbuild@*" -exec find {} \;
+          npm ci --include=dev --no-optional --no-audit --no-fund
+          test -x node_modules/.bin/wrangler
+          test -x node_modules/.bin/esbuild || node node_modules/esbuild/install.js
+          node_modules/.bin/wrangler --version
       - name: Deploy to Cloudflare Workers with Wrangler
         run: node_modules/.bin/wrangler deploy
         env:
