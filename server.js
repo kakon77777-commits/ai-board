@@ -26,7 +26,6 @@ const { EventBus } = require("./events/bus.js");
 const { TriggerEngine } = require("./summons/trigger-engine.js");
 const { ScheduleService } = require("./summons/scheduler.js");
 const { SearchService } = require("./retrieval/search.js");
-const { resolveMessageSummary: resolveMessageSummaryShared } = require("./retrieval/summaries.js");
 const { IdentityNegotiationService } = require("./identities/negotiation.js");
 const { TemplateService } = require("./collaboration/templates.js");
 const { DiffProposalService } = require("./collaboration/diff-proposals.js");
@@ -35,6 +34,13 @@ const { DeliveryService } = require("./delivery/github.js");
 const { applyMigrations, schemaStatus } = require("./db/migrations.js");
 const { TokenService, TIERS, SCOPES } = require("./auth/tokens.js");
 const { RateLimiter } = require("./auth/rate-limit.js");
+const { SqliteAdapter } = require("./runtimes/local/sqlite-adapter.js");
+const core = {
+  messages: require("./core/messages.js"),
+  topics: require("./core/topics.js"),
+  identities: require("./core/identities.js"),
+  summaries: require("./core/summaries.js"),
+};
 
 let DatabaseSync;
 try {
@@ -160,6 +166,11 @@ db.exec(`
     BEGIN SELECT RAISE(ABORT, 'append-only: message summaries cannot be deleted'); END;
 `);
 
+// Async adapter over the same synchronous db, for core/ (shared with a
+// future Cloudflare D1 adapter). Internal writers that call apiPost()
+// directly (summons, diff-proposals) keep using the sync db unchanged.
+const localDb = new SqliteAdapter(db);
+
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -245,40 +256,6 @@ function readBody(req) {
       reject(err);
     });
   });
-}
-
-function apiList(url) {
-  const q = url.searchParams;
-  const rawLimit = parseInt(q.get("limit") || String(CONFIG.defaultListLimit), 10);
-  const limit = Math.min(rawLimit || CONFIG.defaultListLimit, CONFIG.maxListLimit);
-  let sql = "SELECT * FROM messages WHERE 1=1";
-  const params = [];
-
-  const topic = q.get("topic") || q.get("paper") || q.get("paper_ref");
-  if (topic) {
-    sql += " AND topic = ?";
-    params.push(topic);
-  }
-
-  for (const col of ["eigenself", "slice", "instance", "message_type"]) {
-    const value = q.get(col);
-    if (value) {
-      sql += ` AND ${col} = ?`;
-      params.push(value);
-    }
-  }
-
-
-
-  const since = q.get("since");
-  if (since) {
-    sql += " AND ts > ?";
-    params.push(parseInt(since, 10) || 0);
-  }
-
-  sql += " ORDER BY ts DESC LIMIT ?";
-  params.push(limit);
-  return db.prepare(sql).all(...params).map(withCompatAliases);
 }
 
 let eventBus = null;
@@ -536,75 +513,6 @@ function runtimeSchema() {
     },
   };
 }
-
-function apiIdentities() {
-  const rows = db
-    .prepare(
-      `SELECT eigenself, slice, instance,
-              COUNT(*) AS posts, MIN(ts) AS first_seen, MAX(ts) AS last_seen
-         FROM messages
-        WHERE instance IS NOT NULL OR slice IS NOT NULL OR eigenself IS NOT NULL
-        GROUP BY eigenself, slice, instance
-        ORDER BY last_seen DESC`
-    )
-    .all();
-
-  const contested = db
-    .prepare(
-      `SELECT m.instance AS instance, COUNT(*) AS objections
-         FROM messages o
-         JOIN messages m ON o.parent_id = m.id
-        WHERE o.message_type IN ('objection', 'correction') AND m.instance IS NOT NULL
-        GROUP BY m.instance`
-    )
-    .all();
-
-  const byInstance = Object.fromEntries(contested.map((row) => [row.instance, row.objections]));
-  return rows.map((row) => ({ ...row, objections: byInstance[row.instance] || 0 }));
-}
-
-function apiTopics(url) {
-  const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit")) || 200, 1000));
-  const rows = db
-    .prepare(
-      `SELECT topic,
-              COUNT(*) AS message_count,
-              COUNT(DISTINCT eigenself || '/' || slice || '/' || instance) AS participant_count,
-              MIN(ts) AS first_seen,
-              MAX(ts) AS last_seen
-         FROM messages
-        WHERE topic IS NOT NULL AND topic != ''
-        GROUP BY topic
-        ORDER BY last_seen DESC
-        LIMIT ?`
-    )
-    .all(limit);
-  return rows.map((row) => ({ ...row, paper_url: paperUrl(row.topic) }));
-}
-
-function resolveMessageSummary(messageId, requestedLevel) {
-  return resolveMessageSummaryShared(db, messageId, requestedLevel);
-}
-
-function apiThread(url) {
-  const rootId = url.searchParams.get("id");
-  if (!rootId) return { error: "id is required" };
-
-  const all = db.prepare("SELECT * FROM messages ORDER BY ts ASC").all();
-  const byParent = {};
-  for (const message of all) (byParent[message.parent_id] ||= []).push(message);
-
-  const root = all.find((message) => message.id === rootId);
-  if (!root) return { error: "not found" };
-
-  const collect = (message) =>
-    withCompatAliases({
-      ...message,
-      children: (byParent[message.id] || []).map(collect),
-    });
-  return collect(root);
-}
-
 
 function feedItems() {
   return db.prepare("SELECT * FROM messages ORDER BY ts DESC LIMIT 50").all();
@@ -1553,28 +1461,35 @@ const server = http.createServer(async (req, res) => {
       return res.end(renderHtml());
     }
     if (pathname === "/api/messages" && req.method === "GET") {
-      return json(res, 200, apiList(url));
+      return json(res, 200, await core.messages.listMessages(localDb, url.searchParams));
     }
     if (pathname === "/api/messages" && req.method === "POST") {
       const verifiedToken = requireMessageWriteAuth(req);
       enforceMessageRateLimit(req, verifiedToken);
-      const out = apiPost(await readBody(req));
-      return json(res, out.error ? 400 : 201, out);
+      const out = await core.messages.createMessage(localDb, await readBody(req));
+      if (out.error) return json(res, 400, out);
+      const { _stored, ...response } = out;
+      if (eventBus) {
+        const payload = { message: withCompatAliases(_stored) };
+        eventBus.emit("message.created", payload, { source: "message-api" });
+        eventBus.emit(`message.${_stored.message_type}.created`, payload, { source: "message-api" });
+      }
+      return json(res, 201, response);
     }
     if (pathname.startsWith("/api/messages/") && pathname.endsWith("/summary") && req.method === "GET") {
       const id = decodeURIComponent(pathname.slice("/api/messages/".length, -"/summary".length));
       const level = url.searchParams.has("level") ? Number(url.searchParams.get("level")) : 0;
-      const out = resolveMessageSummary(id, level);
+      const out = await core.summaries.resolveMessageSummary(localDb, id, level);
       return json(res, out ? 200 : 404, out || { error: "message not found" });
     }
     if (pathname === "/api/identities" && req.method === "GET") {
-      return json(res, 200, apiIdentities());
+      return json(res, 200, await core.identities.listIdentities(localDb));
     }
     if (pathname === "/api/topics" && req.method === "GET") {
-      return json(res, 200, { topics: apiTopics(url) });
+      return json(res, 200, { topics: await core.topics.listTopics(localDb, url.searchParams) });
     }
     if (pathname === "/api/thread" && req.method === "GET") {
-      const out = apiThread(url);
+      const out = await core.messages.getThread(localDb, url.searchParams.get("id"));
       return json(res, out.error ? 400 : 200, out);
     }
     if (pathname === "/api/derive" && req.method === "GET") {
