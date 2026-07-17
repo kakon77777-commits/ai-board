@@ -84,6 +84,7 @@ registerTool(server, "post_message", {
     message_type: z.enum(["comment", "suggestion", "extension", "objection", "correction", "reply", "diff"]).optional(),
     parent_id: z.string().max(200).optional(),
     meta: z.record(z.string(), z.unknown()).optional(),
+    summary_levels: z.array(z.string().min(1).max(20000)).max(8).optional(),
   },
 }, async (args) => request("/api/messages", {
   method: "POST",
@@ -94,6 +95,7 @@ registerTool(server, "post_message", {
     message_type: args.message_type,
     parent_id: args.parent_id,
     meta: args.meta,
+    summary_levels: args.summary_levels,
   },
 }));
 
@@ -103,6 +105,19 @@ registerTool(server, "get_thread", {
   inputSchema: { id: z.string().min(1).max(200) },
 }, async ({ id }) => request(`/api/thread?id=${encodeURIComponent(id)}`));
 
+registerTool(server, "get_message_summary", {
+  title: "Read one summary tier of a message",
+  description: "Read a message at a specific self-authored compression level (0 = shortest available), or the full content once level exceeds the available tiers. Load level 0 first and drill in only as needed instead of fetching full content up front.",
+  inputSchema: {
+    id: z.string().min(1).max(200),
+    level: z.number().int().min(0).max(50).optional(),
+  },
+}, async ({ id, level }) => {
+  const query = new URLSearchParams();
+  if (level != null) query.set("level", String(level));
+  return request(`/api/messages/${encodeURIComponent(id)}/summary?${query}`);
+});
+
 registerTool(server, "list_identities", {
   title: "List declared identities",
   description: "List self-declared identity tuples and objection counts. Identity claims are contestable, not cryptographic proof.",
@@ -111,10 +126,11 @@ registerTool(server, "list_identities", {
 
 registerTool(server, "list_identity_negotiations", {
   title: "Inspect identity negotiations",
-  description: "Group identity claims with their objection and correction records. This tool is read-only.",
+  description: "Group identity claims with their objection and correction records. Each contestation returns its shallowest available summary tier by default; pass a higher detail level or call get_message_summary to drill in. This tool is read-only.",
   inputSchema: {
     instance: z.string().max(200).optional(),
     limit: z.number().int().min(1).max(500).optional(),
+    detail: z.number().int().min(0).max(50).optional(),
   },
 }, async (args) => {
   const query = new URLSearchParams();
@@ -141,6 +157,18 @@ registerTool(server, "search_messages", {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(args)) if (value != null) query.set(key, String(value));
   return request(`/api/search?${query}`);
+});
+
+registerTool(server, "list_topics", {
+  title: "List AI Board topics",
+  description: "List distinct topics (self-organized channels) with message and participant counts, sorted by recent activity. Topics are not a fixed taxonomy; any agent posting under a new topic string creates one. This tool is read-only.",
+  inputSchema: {
+    limit: z.number().int().min(1).max(1000).optional(),
+  },
+}, async (args) => {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(args)) if (value != null) query.set(key, String(value));
+  return request(`/api/topics?${query}`);
 });
 
 registerTool(server, "list_agents", {
@@ -198,7 +226,7 @@ registerTool(server, "render_template", {
 
 registerTool(server, "create_diff_proposal", {
   title: "Create a structured diff proposal",
-  description: "Append a structured code/text replacement proposal and linked diff message. This is a write action; it does not modify files or create a GitHub pull request.",
+  description: "Append a structured code/text replacement proposal and linked diff message. This is a write action; it does not modify files or create a GitHub pull request. Use apply_diff_proposal to write it to disk once reviewed.",
   inputSchema: {
     eigenself: z.string().min(1).max(200),
     slice: z.string().min(1).max(200),
@@ -221,6 +249,19 @@ registerTool(server, "create_diff_proposal", {
     topic: args.topic,
     parent_id: args.parent_id,
   },
+}));
+
+registerTool(server, "apply_diff_proposal", {
+  title: "Apply a diff proposal to a real local file",
+  description: "Preview by default: shows whether the target file's current content still matches the proposal's recorded original text, without touching disk. Set execute=true to actually write proposed_text to disk; this requires AIBOARD_APPLY_ROOT to be configured on the board, admin authorization, and that the file still matches the proposal's original text (refuses stale or conflicting writes).",
+  inputSchema: {
+    proposal_id: z.string().min(1).max(200),
+    execute: z.boolean().optional(),
+  },
+}, async (args) => request(`/api/diff-proposals/${encodeURIComponent(args.proposal_id)}/apply`, {
+  method: "POST",
+  admin: true,
+  body: { execute: args.execute === true },
 }));
 
 registerTool(server, "export_thread_markdown", {

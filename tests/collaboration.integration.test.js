@@ -104,4 +104,53 @@ test("search, identity negotiation, templates and diff proposals share the ledge
   const diffMessages = await (await fetch(`${base}/api/messages?message_type=diff&limit=10`)).json();
   assert.equal(diffMessages.length, 1);
   assert.equal(JSON.parse(diffMessages[0].meta).diff_proposal_id, diff.id);
+
+  const topicsResponse = await fetch(`${base}/api/topics`);
+  const topics = await topicsResponse.json();
+  assert.equal(topicsResponse.status, 200, stderr);
+  const retrievalTopic = topics.topics.find((row) => row.topic === "retrieval-test");
+  assert.ok(retrievalTopic, "retrieval-test topic should be discoverable");
+  assert.ok(retrievalTopic.message_count >= 2);
+  assert.ok(retrievalTopic.participant_count >= 2);
+
+  const tieredIdentity = { eigenself: "human/test", slice: "Tiered", instance: "tiered-1" };
+  const tieredRoot = await postMessage(base, {
+    identity: tieredIdentity, topic: "retrieval-test",
+    content: "Root claim for a tiered contestation test.",
+  });
+  assert.equal(tieredRoot.response.status, 201, stderr);
+  const tieredObjection = await postMessage(base, {
+    identity: { eigenself: "ai/reviewer", slice: "Reviewer", instance: "reviewer-2" },
+    topic: "retrieval-test", message_type: "objection", parent_id: tieredRoot.body.id,
+    content: "This is the full, long-form objection with every supporting detail spelled out at length.",
+    summary_levels: ["Disputed.", "Disputed: needs qualification.", "Disputed: the claim needs qualification because the supporting evidence is incomplete."],
+  });
+  assert.equal(tieredObjection.response.status, 201, stderr);
+  const objectionId = tieredObjection.body.id;
+
+  const shallow = await (await fetch(`${base}/api/identity-negotiations?instance=tiered-1`)).json();
+  assert.equal(shallow.length, 1);
+  const shallowContestation = shallow[0].contestations.find((message) => message.id === objectionId);
+  assert.equal(shallowContestation.content, "Disputed.");
+  assert.equal(shallowContestation.summary_meta.level, 0);
+  assert.equal(shallowContestation.summary_meta.max_level, 3);
+  assert.equal(shallowContestation.summary_meta.has_more, true);
+
+  const deeper = await (await fetch(`${base}/api/identity-negotiations?instance=tiered-1&detail=1`)).json();
+  const deeperContestation = deeper[0].contestations.find((message) => message.id === objectionId);
+  assert.equal(deeperContestation.content, "Disputed: needs qualification.");
+
+  const summaryLevel0 = await (await fetch(`${base}/api/messages/${objectionId}/summary`)).json();
+  assert.equal(summaryLevel0.level, 0);
+  assert.equal(summaryLevel0.is_full, false);
+  assert.equal(summaryLevel0.content, "Disputed.");
+
+  const summaryFull = await (await fetch(`${base}/api/messages/${objectionId}/summary?level=99`)).json();
+  assert.equal(summaryFull.is_full, true);
+  assert.equal(summaryFull.has_more, false);
+  assert.match(summaryFull.content, /full, long-form objection/);
+
+  const untieredMessage = await (await fetch(`${base}/api/messages/${first.body.id}/summary`)).json();
+  assert.equal(untieredMessage.max_level, 0);
+  assert.equal(untieredMessage.is_full, true);
 });

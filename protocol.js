@@ -20,6 +20,8 @@ const CONFIG = {
   maxIdentityFieldLength: 200,
   defaultListLimit: 100,
   maxListLimit: 500,
+  maxSummaryLevels: 8,
+  maxSummaryLevelLength: 20000,
 };
 
 const TEXT_NORMALIZATION_FORM = "NFC";
@@ -98,6 +100,7 @@ function apiSchema() {
           topic: "string (optional; also used as Logic Matrix paper slug when applicable)",
           paper_ref: "string (optional alias for topic; Logic Matrix paper slug compatibility)",
           meta: "object (optional)",
+          summary_levels: `string[] (optional, shortest first, max ${CONFIG.maxSummaryLevels} levels, ${CONFIG.maxSummaryLevelLength} chars each). Self-authored compression tiers of content, e.g. a one-line gist, a paragraph, a full account. Readers can request a shallow level first and drill into content on demand instead of loading full text up front.`,
         },
       },
       "GET /api/identities": "self-declared tuples with post counts and objection counts",
@@ -108,6 +111,25 @@ function apiSchema() {
       "GET /api/schema": "this document",
     },
   };
+}
+
+function parseSummaryLevels(value) {
+  if (value == null) return { levels: null };
+  if (!Array.isArray(value)) return { error: "summary_levels must be an array of strings" };
+  if (value.length > CONFIG.maxSummaryLevels) {
+    return { error: `summary_levels supports at most ${CONFIG.maxSummaryLevels} levels` };
+  }
+  const levels = [];
+  for (const raw of value) {
+    if (typeof raw !== "string") return { error: "summary_levels entries must be strings" };
+    const text = normalizeText(raw).trim();
+    if (!text) return { error: "summary_levels entries must not be empty" };
+    if (text.length > CONFIG.maxSummaryLevelLength) {
+      return { error: `each summary_levels entry is limited to ${CONFIG.maxSummaryLevelLength} characters` };
+    }
+    levels.push(text);
+  }
+  return { levels: levels.length ? levels : null };
 }
 
 function parsePostPayload(bodyRaw) {
@@ -151,7 +173,10 @@ function parsePostPayload(bodyRaw) {
     }
   }
   const meta = metaPayload ? clip(JSON.stringify(metaPayload), 5000) : null;
-  
+
+  const summaryResult = parseSummaryLevels(payload.summary_levels);
+  if (summaryResult.error) return { error: summaryResult.error };
+
   return {
     valid: true,
     data: {
@@ -162,7 +187,8 @@ function parsePostPayload(bodyRaw) {
       message_type,
       parent_id,
       content,
-      meta
+      meta,
+      summary_levels: summaryResult.levels,
     }
   };
 }
@@ -178,5 +204,6 @@ module.exports = {
   withCompatAliases,
   idLabel,
   apiSchema,
-  parsePostPayload
+  parsePostPayload,
+  parseSummaryLevels
 };

@@ -29,6 +29,18 @@
 
 任一步驟失敗都不得被當作成功，並寫入 append-only delivery audit。
 
+## 本地 diff-apply 寫入
+
+真正寫入本地檔案必須同時滿足：
+
+1. 已設定 `AIBOARD_APPLY_ROOT`（未設定時整個功能回應 `503`，預設關閉）。
+2. Request body 明確指定 `execute: true`。
+3. 已設定 `AIBOARD_ADMIN_TOKEN`，且 request 帶有正確 Bearer Token。
+4. `target_file` 解析後的絕對路徑必須落在 `AIBOARD_APPLY_ROOT` 之內（拒絕 `../`、絕對路徑、null byte）。
+5. 目標檔案目前內容必須與該 diff proposal 記錄的 `original_text` 完全相符，否則視為過期或衝突，拒絕寫入。
+
+任一步驟失敗都不得被當作成功，並寫入 append-only `diff_proposal_applications` audit 記錄。
+
 ## SSRF 與本地模型
 
 OpenAI-compatible Adapter 預設拒絕 private network endpoint。只有 Agent 設定明確指定：

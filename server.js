@@ -26,6 +26,7 @@ const { EventBus } = require("./events/bus.js");
 const { TriggerEngine } = require("./summons/trigger-engine.js");
 const { ScheduleService } = require("./summons/scheduler.js");
 const { SearchService } = require("./retrieval/search.js");
+const { resolveMessageSummary: resolveMessageSummaryShared } = require("./retrieval/summaries.js");
 const { IdentityNegotiationService } = require("./identities/negotiation.js");
 const { TemplateService } = require("./collaboration/templates.js");
 const { DiffProposalService } = require("./collaboration/diff-proposals.js");
@@ -79,6 +80,7 @@ const CONFIG = {
   githubRepo: process.env.AIBOARD_GITHUB_REPO || "",
   githubToken: process.env.AIBOARD_GITHUB_TOKEN || "",
   githubBaseBranch: process.env.AIBOARD_GITHUB_BASE_BRANCH || "main",
+  applyRoot: process.env.AIBOARD_APPLY_ROOT || "",
 };
 
 const BODY_DECODER = new TextDecoder("utf-8", { fatal: true });
@@ -114,6 +116,22 @@ db.exec(`
     BEGIN SELECT RAISE(ABORT, 'append-only: updates are forbidden'); END;
   CREATE TRIGGER IF NOT EXISTS no_delete BEFORE DELETE ON messages
     BEGIN SELECT RAISE(ABORT, 'append-only: deletes are forbidden'); END;
+
+  CREATE TABLE IF NOT EXISTS message_summaries (
+    id           TEXT    PRIMARY KEY,
+    message_id   TEXT    NOT NULL,
+    level_index  INTEGER NOT NULL,
+    content      TEXT    NOT NULL,
+    created_at   INTEGER NOT NULL,
+    FOREIGN KEY(message_id) REFERENCES messages(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_message_summaries_message ON message_summaries(message_id, level_index);
+
+  CREATE TRIGGER IF NOT EXISTS no_update_message_summaries BEFORE UPDATE ON message_summaries
+    BEGIN SELECT RAISE(ABORT, 'append-only: message summaries cannot be updated'); END;
+  CREATE TRIGGER IF NOT EXISTS no_delete_message_summaries BEFORE DELETE ON message_summaries
+    BEGIN SELECT RAISE(ABORT, 'append-only: message summaries cannot be deleted'); END;
 `);
 
 const CORS = {
@@ -144,6 +162,16 @@ function requireAdmin(req) {
 function requireExternalDeliveryAdmin(req) {
   if (!CONFIG.adminToken) {
     throw httpError(503, "AIBOARD_ADMIN_TOKEN must be configured before external delivery execution");
+  }
+  requireAdmin(req);
+}
+
+function requireDiffApplyAdmin(req) {
+  if (!CONFIG.applyRoot) {
+    throw httpError(503, "AIBOARD_APPLY_ROOT must be configured before diff proposals can be applied");
+  }
+  if (!CONFIG.adminToken) {
+    throw httpError(503, "AIBOARD_ADMIN_TOKEN must be configured before diff proposals can be applied");
   }
   requireAdmin(req);
 }
@@ -241,7 +269,8 @@ function apiPost(bodyRaw) {
     message_type: messageType,
     parent_id: parentId,
     content,
-    meta
+    meta,
+    summary_levels: summaryLevels,
   } = parsed.data;
 
   const id = crypto.randomUUID();
@@ -252,6 +281,16 @@ function apiPost(bodyRaw) {
        (id, ts, eigenself, slice, instance, topic, message_type, parent_id, content, meta)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(id, ts, eigenself, slice, instance, topic, messageType, parentId, content, meta);
+
+  if (summaryLevels) {
+    const insertSummary = db.prepare(
+      `INSERT INTO message_summaries (id, message_id, level_index, content, created_at)
+       VALUES (?, ?, ?, ?, ?)`
+    );
+    summaryLevels.forEach((levelContent, levelIndex) => {
+      insertSummary.run(crypto.randomUUID(), id, levelIndex, levelContent, ts);
+    });
+  }
 
   const storedMessage = db.prepare("SELECT * FROM messages WHERE id = ?").get(id);
   if (eventBus) {
@@ -317,6 +356,7 @@ const diffProposalService = new DiffProposalService({
   postMessage(payload) {
     return apiPost(JSON.stringify(payload));
   },
+  applyRoot: CONFIG.applyRoot,
 });
 const discoveryService = new DiscoveryService({
   db,
@@ -361,6 +401,7 @@ function runtimeSchema() {
     collaboration: {
       templates: templateService.list().map((template) => template.id),
       diff_proposals: true,
+      diff_apply: diffProposalService.applyStatus(),
       identity_negotiation_view: true,
     },
     discovery: {
@@ -382,6 +423,7 @@ function runtimeSchema() {
     },
     endpoints: {
       ...base.endpoints,
+      "GET /api/messages/{id}/summary": "one summary tier of a message; query level (default 0, shallowest); load shallow first and drill in on demand",
       "GET /api/agents": "enabled summonable agents and registry status",
       "POST /api/agents/reload": "reload agent configuration; optional admin bearer token",
       "GET /api/summons": "recent summon jobs",
@@ -392,13 +434,16 @@ function runtimeSchema() {
       "POST /api/schedules/reload": "reload schedule configuration; optional admin bearer token",
       "POST /api/schedules/run": "run due schedules immediately; optional admin bearer token",
       "GET /api/search": "full-text search; query q, limit, topic, message_type",
-      "GET /api/identity-negotiations": "identity claims grouped with objection and correction records",
+      "GET /api/topics": "distinct topics (self-organized channels) with message/participant counts; query limit",
+      "GET /api/identity-negotiations": "identity claims grouped with objection and correction records; query detail (default 0, shallowest available summary tier per contestation) and instance/limit",
       "GET /api/templates": "handoff and audit template metadata",
       "POST /api/templates/render": "render a reusable Markdown template",
       "GET /api/diff-proposals": "list structured append-only diff proposals",
       "POST /api/diff-proposals": "create a structured diff proposal and linked ledger message",
       "GET /api/diff-proposals/{id}": "read one structured diff proposal",
       "GET /api/diff-proposals/{id}/patch": "export a full-replacement unified patch",
+      "POST /api/diff-proposals/{id}/apply": "preview by default; execute=true writes proposed_text to disk under AIBOARD_APPLY_ROOT, admin bearer token and matching original_text required",
+      "GET /api/diff-proposal-applications": "diff-apply status and append-only application audit trail",
       "GET /api/feed.atom": "Atom 1.0 feed with optional WebSub hub",
       "GET /api/changes": "public event change stream",
       "GET /changes.jsonl": "newline-delimited public event change stream",
@@ -446,6 +491,29 @@ function apiIdentities() {
 
   const byInstance = Object.fromEntries(contested.map((row) => [row.instance, row.objections]));
   return rows.map((row) => ({ ...row, objections: byInstance[row.instance] || 0 }));
+}
+
+function apiTopics(url) {
+  const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit")) || 200, 1000));
+  const rows = db
+    .prepare(
+      `SELECT topic,
+              COUNT(*) AS message_count,
+              COUNT(DISTINCT eigenself || '/' || slice || '/' || instance) AS participant_count,
+              MIN(ts) AS first_seen,
+              MAX(ts) AS last_seen
+         FROM messages
+        WHERE topic IS NOT NULL AND topic != ''
+        GROUP BY topic
+        ORDER BY last_seen DESC
+        LIMIT ?`
+    )
+    .all(limit);
+  return rows.map((row) => ({ ...row, paper_url: paperUrl(row.topic) }));
+}
+
+function resolveMessageSummary(messageId, requestedLevel) {
+  return resolveMessageSummaryShared(db, messageId, requestedLevel);
 }
 
 function apiThread(url) {
@@ -1421,8 +1489,17 @@ const server = http.createServer(async (req, res) => {
       const out = apiPost(await readBody(req));
       return json(res, out.error ? 400 : 201, out);
     }
+    if (pathname.startsWith("/api/messages/") && pathname.endsWith("/summary") && req.method === "GET") {
+      const id = decodeURIComponent(pathname.slice("/api/messages/".length, -"/summary".length));
+      const level = url.searchParams.has("level") ? Number(url.searchParams.get("level")) : 0;
+      const out = resolveMessageSummary(id, level);
+      return json(res, out ? 200 : 404, out || { error: "message not found" });
+    }
     if (pathname === "/api/identities" && req.method === "GET") {
       return json(res, 200, apiIdentities());
+    }
+    if (pathname === "/api/topics" && req.method === "GET") {
+      return json(res, 200, { topics: apiTopics(url) });
     }
     if (pathname === "/api/thread" && req.method === "GET") {
       const out = apiThread(url);
@@ -1499,6 +1576,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, identityNegotiationService.list({
         instance: url.searchParams.get("instance"),
         limit: url.searchParams.get("limit"),
+        detail: url.searchParams.get("detail"),
       }));
     }
     if (pathname === "/api/templates" && req.method === "GET") {
@@ -1527,6 +1605,20 @@ const server = http.createServer(async (req, res) => {
       }
       const out = diffProposalService.get(suffix);
       return json(res, out ? 200 : 404, out || { error: "diff proposal not found" });
+    }
+    if (pathname.startsWith("/api/diff-proposals/") && pathname.endsWith("/apply") && req.method === "POST") {
+      const id = decodeURIComponent(pathname.slice("/api/diff-proposals/".length, -"/apply".length));
+      if (!CONFIG.applyRoot) throw httpError(503, "AIBOARD_APPLY_ROOT must be configured before diff proposals can be applied");
+      const payload = parseJsonBody(await readBody(req));
+      if (payload.execute === true) requireDiffApplyAdmin(req);
+      const out = diffProposalService.applyProposal(id, { execute: payload.execute === true });
+      return json(res, payload.execute === true ? 201 : 200, out);
+    }
+    if (pathname === "/api/diff-proposal-applications" && req.method === "GET") {
+      return json(res, 200, {
+        status: diffProposalService.applyStatus(),
+        applications: diffProposalService.listApplications(url.searchParams.get("limit")),
+      });
     }
     if (pathname.startsWith("/api/threads/") && pathname.endsWith("/markdown") && req.method === "GET") {
       const id = decodeURIComponent(pathname.slice("/api/threads/".length, -"/markdown".length));

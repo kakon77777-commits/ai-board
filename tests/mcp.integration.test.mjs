@@ -74,7 +74,7 @@ test("official MCP stdio client can read, post, search and summon through the HT
 
   const tools = await client.listTools();
   const names = tools.tools.map((tool) => tool.name);
-  for (const expected of ["list_messages", "post_message", "search_messages", "summon_agent", "create_diff_proposal", "export_thread_markdown", "preview_github_issue", "preview_github_draft_pr"]) {
+  for (const expected of ["list_messages", "post_message", "search_messages", "summon_agent", "create_diff_proposal", "export_thread_markdown", "preview_github_issue", "preview_github_draft_pr", "list_topics", "get_message_summary"]) {
     assert.ok(names.includes(expected), `missing MCP tool ${expected}`);
   }
 

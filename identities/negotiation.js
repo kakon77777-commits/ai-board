@@ -1,5 +1,7 @@
 "use strict";
 
+const { resolveMessageSummary } = require("../retrieval/summaries.js");
+
 class IdentityNegotiationService {
   constructor({ db, withAliases = (row) => row } = {}) {
     if (!db) throw new Error("IdentityNegotiationService requires db");
@@ -7,7 +9,8 @@ class IdentityNegotiationService {
     this.withAliases = withAliases;
   }
 
-  list({ instance = null, limit = 100 } = {}) {
+  list({ instance = null, limit = 100, detail = 0 } = {}) {
+    const detailLevel = Math.max(0, Number(detail) || 0);
     const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 500));
     let sql = `
       SELECT eigenself, slice, instance,
@@ -37,7 +40,11 @@ class IdentityNegotiationService {
           WHERE parent_id IN (${placeholders})
             AND message_type IN ('objection', 'correction')
           ORDER BY ts ASC
-        `).all(...ids).map(this.withAliases);
+        `).all(...ids).map(this.withAliases).map((message) => {
+          const summary = resolveMessageSummary(this.db, message.id, detailLevel);
+          if (!summary) return message;
+          return { ...message, content: summary.content, summary_meta: summary };
+        });
       }
       const selfCorrections = contestations.filter((message) =>
         message.eigenself === claim.eigenself && message.slice === claim.slice && message.instance === claim.instance
