@@ -32,6 +32,7 @@ const { TemplateService } = require("./collaboration/templates.js");
 const { DiffProposalService } = require("./collaboration/diff-proposals.js");
 const { DiscoveryService } = require("./discovery/service.js");
 const { DeliveryService } = require("./delivery/github.js");
+const { applyMigrations, schemaStatus } = require("./db/migrations.js");
 
 let DatabaseSync;
 try {
@@ -83,12 +84,28 @@ const CONFIG = {
   applyRoot: process.env.AIBOARD_APPLY_ROOT || "",
 };
 
+const PKG = require("./package.json");
+
+function resolveCommit() {
+  if (process.env.AIBOARD_COMMIT) return process.env.AIBOARD_COMMIT;
+  try {
+    return require("node:child_process")
+      .execFileSync("git", ["rev-parse", "HEAD"], { cwd: __dirname, stdio: ["ignore", "pipe", "ignore"] })
+      .toString()
+      .trim();
+  } catch {
+    return "unknown";
+  }
+}
+
+const RUNTIME_INFO = { version: PKG.version, commit: resolveCommit(), runtime: "local" };
+
 const BODY_DECODER = new TextDecoder("utf-8", { fatal: true });
 
 const db = new DatabaseSync(CONFIG.dbPath);
+db.exec("PRAGMA journal_mode = WAL;");
+applyMigrations(db);
 db.exec(`
-  PRAGMA journal_mode = WAL;
-
   CREATE TABLE IF NOT EXISTS messages (
     id            TEXT    PRIMARY KEY,
     ts            INTEGER NOT NULL,
@@ -377,7 +394,7 @@ function runtimeSchema() {
   const base = apiSchema();
   return {
     ...base,
-    version: "1.0.0-rc.1",
+    version: RUNTIME_INFO.version,
     summoning: {
       registry: agentRegistry.status(),
       admin_token_required: Boolean(CONFIG.adminToken),
@@ -1510,6 +1527,25 @@ const server = http.createServer(async (req, res) => {
       if (!seed) return json(res, 400, { error: "seed is required" });
       return json(res, 200, { seed, instance: deriveInstance(seed) });
     }
+    if (pathname === "/health" && req.method === "GET") {
+      return json(res, 200, { status: "ok" });
+    }
+    if (pathname === "/ready" && req.method === "GET") {
+      try {
+        db.prepare("SELECT 1").get();
+        return json(res, 200, { status: "ready" });
+      } catch (error) {
+        return json(res, 503, { status: "not_ready", error: error.message });
+      }
+    }
+    if (pathname === "/version" && req.method === "GET") {
+      return json(res, 200, {
+        version: RUNTIME_INFO.version,
+        commit: RUNTIME_INFO.commit,
+        runtime: RUNTIME_INFO.runtime,
+        schema_version: schemaStatus(db).schema_version,
+      });
+    }
     if (pathname === "/api/schema" && req.method === "GET") {
       return json(res, 200, runtimeSchema());
     }
@@ -1656,7 +1692,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === "/.well-known/ai-board.json" && req.method === "GET") {
       return json(res, 200, discoveryService.wellKnown(requestBase(req), {
-        version: "1.0.0-rc.1",
+        version: RUNTIME_INFO.version,
         mcp: { transport: "stdio", command: "node mcp-server.mjs" },
       }));
     }
