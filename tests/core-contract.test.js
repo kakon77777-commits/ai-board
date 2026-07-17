@@ -18,6 +18,8 @@ const { createMessage, listMessages, getThread } = require("../core/messages.js"
 const { listTopics } = require("../core/topics.js");
 const { listIdentities } = require("../core/identities.js");
 const { resolveMessageSummary } = require("../core/summaries.js");
+const { search } = require("../core/search.js");
+const { atomFeed, sitemap } = require("../core/discovery.js");
 
 function openDb(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ai-board-core-contract-"));
@@ -128,4 +130,52 @@ test("core/summaries: resolveMessageSummary drills down and falls back to full c
 
   const missing = await resolveMessageSummary(db, "does-not-exist", 0);
   assert.equal(missing, null);
+});
+
+test("core/search: LIKE-based search matches content/topic/identity and respects filters", async (t) => {
+  const db = openDb(t);
+  await createMessage(db, post({ eigenself: "human/test", slice: "Search", instance: "search-1" }, {
+    topic: "search-test", content: "the quick brown fox",
+  }));
+  await createMessage(db, post({ eigenself: "ai/other", slice: "Search", instance: "search-2" }, {
+    topic: "search-test", message_type: "objection", content: "the fox is disputed",
+  }));
+  await createMessage(db, post({ eigenself: "human/test", slice: "Search", instance: "search-1" }, {
+    topic: "other-topic", content: "unrelated content",
+  }));
+
+  const missingQuery = await search(db, { q: "" });
+  assert.ok(missingQuery.error);
+
+  const byContent = await search(db, { q: "fox" });
+  assert.equal(byContent.length, 2);
+
+  const byTopic = await search(db, { q: "fox", topic: "search-test", messageType: "objection" });
+  assert.equal(byTopic.length, 1);
+  assert.match(byTopic[0].content, /disputed/);
+
+  const noHits = await search(db, { q: "nonexistent-term-xyz" });
+  assert.equal(noHits.length, 0);
+});
+
+test("core/discovery: atomFeed and sitemap render the message ledger as XML", async (t) => {
+  const db = openDb(t);
+  const root = await createMessage(db, post({ eigenself: "human/test", slice: "Feed", instance: "feed-1" }, {
+    topic: "feed-test", content: "a feed entry",
+  }));
+
+  const atom = await atomFeed(db, { siteTitle: "Test Board", publicUrl: "", websubHub: "" }, "http://example.test");
+  assert.match(atom, /<feed xmlns="http:\/\/www\.w3\.org\/2005\/Atom">/);
+  assert.match(atom, /Test Board/);
+  assert.match(atom, new RegExp(root.id));
+  assert.match(atom, /a feed entry/);
+  assert.doesNotMatch(atom, /rel="hub"/);
+
+  const atomWithHub = await atomFeed(db, { siteTitle: "Test Board", publicUrl: "https://board.example", websubHub: "https://hub.example" }, "http://example.test");
+  assert.match(atomWithHub, /rel="hub" href="https:\/\/hub\.example"/);
+  assert.match(atomWithHub, /https:\/\/board\.example\/api\/thread/);
+
+  const map = await sitemap(db, { publicUrl: "https://board.example" }, "http://example.test");
+  assert.match(map, /<urlset xmlns="http:\/\/www\.sitemaps\.org\/schemas\/sitemap\/0\.9">/);
+  assert.match(map, new RegExp(`https://board\\.example/api/thread\\?id=${root.id}`));
 });

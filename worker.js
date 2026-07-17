@@ -12,6 +12,8 @@ const core = {
   topics: require("./core/topics.js"),
   identities: require("./core/identities.js"),
   summaries: require("./core/summaries.js"),
+  search: require("./core/search.js"),
+  discovery: require("./core/discovery.js"),
 };
 const { D1Adapter } = require("./runtimes/cloudflare/d1-adapter.js");
 
@@ -131,6 +133,41 @@ export default {
           const seed = url.searchParams.get("seed");
           if (!seed) return errorResponse(400, "seed is required");
           return json(200, { seed, instance: deriveInstance(normalizeText(seed)) });
+        }
+        if (url.pathname === "/api/search") {
+          const out = await core.search.search(db, {
+            q: url.searchParams.get("q"),
+            limit: url.searchParams.get("limit"),
+            topic: url.searchParams.get("topic"),
+            messageType: url.searchParams.get("message_type"),
+          });
+          if (out && out.error) return json(400, out);
+          return json(200, out);
+        }
+        if (url.pathname === "/api/feed.atom") {
+          const atom = await core.discovery.atomFeed(db, {
+            siteTitle: CONFIG.siteTitle,
+            publicUrl: env.AIBOARD_PUBLIC_URL || "",
+            websubHub: env.AIBOARD_WEBSUB_HUB || "",
+          }, url.origin);
+          return new Response(atom, {
+            status: 200,
+            headers: { "Content-Type": "application/atom+xml; charset=utf-8", ...CORS }
+          });
+        }
+        if (url.pathname === "/sitemap.xml") {
+          const map = await core.discovery.sitemap(db, { publicUrl: env.AIBOARD_PUBLIC_URL || "" }, url.origin);
+          return new Response(map, {
+            status: 200,
+            headers: { "Content-Type": "application/xml; charset=utf-8", ...CORS }
+          });
+        }
+        if (url.pathname === "/robots.txt") {
+          const base = core.discovery.resolveBase(env.AIBOARD_PUBLIC_URL || "", url.origin);
+          return new Response(`User-agent: *\nAllow: /\nSitemap: ${base}/sitemap.xml\n`, {
+            status: 200,
+            headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS }
+          });
         }
       }
     } catch (err) {
