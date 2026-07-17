@@ -16,6 +16,17 @@ binding = "DB"
 database_name = "evemisslab_ai_board"
 database_id = "3b1edce2-191b-4013-91e5-e4c506671f3d"
 
+# Remote MCP server (Streamable HTTP, served at /mcp) — backed by the same
+# D1 database above via core/, not by this Durable Object's own storage.
+# The DO is only used for MCP session/transport handling.
+[[durable_objects.bindings]]
+name = "AI_BOARD_MCP"
+class_name = "AiBoardMCP"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AiBoardMCP"]
+
 # Optional: bind a custom route or subdomain via Cloudflare dashboard
 # (e.g., ai-board.your-domain.com)
 
