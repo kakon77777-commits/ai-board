@@ -33,6 +33,8 @@ const { DiffProposalService } = require("./collaboration/diff-proposals.js");
 const { DiscoveryService } = require("./discovery/service.js");
 const { DeliveryService } = require("./delivery/github.js");
 const { applyMigrations, schemaStatus } = require("./db/migrations.js");
+const { TokenService, TIERS, SCOPES } = require("./auth/tokens.js");
+const { RateLimiter } = require("./auth/rate-limit.js");
 
 let DatabaseSync;
 try {
@@ -82,6 +84,13 @@ const CONFIG = {
   githubToken: process.env.AIBOARD_GITHUB_TOKEN || "",
   githubBaseBranch: process.env.AIBOARD_GITHUB_BASE_BRANCH || "main",
   applyRoot: process.env.AIBOARD_APPLY_ROOT || "",
+  // Both default OFF: POST /api/messages stays open-write until an operator
+  // explicitly opts in. Built per the engineering task book's §7, but not
+  // activated - see docs/SECURITY.md.
+  requireMessageToken: process.env.AIBOARD_REQUIRE_MESSAGE_TOKEN === "1",
+  rateLimitEnabled: process.env.AIBOARD_RATE_LIMIT_ENABLED === "1",
+  rateLimitPostsPerMinute: Number(process.env.AIBOARD_RATE_LIMIT_POSTS_PER_MINUTE || 20),
+  rateLimitPostsPerDay: Number(process.env.AIBOARD_RATE_LIMIT_POSTS_PER_DAY || 500),
 };
 
 const PKG = require("./package.json");
@@ -389,6 +398,38 @@ const deliveryService = new DeliveryService({
   githubToken: CONFIG.githubToken,
   baseBranch: CONFIG.githubBaseBranch,
 });
+const tokenService = new TokenService({ db });
+const messageRateLimiter = new RateLimiter({
+  windows: [
+    { id: "minute", limit: CONFIG.rateLimitPostsPerMinute, windowMs: 60000 },
+    { id: "day", limit: CONFIG.rateLimitPostsPerDay, windowMs: 86400000 },
+  ],
+});
+setInterval(() => messageRateLimiter.sweep(), 300000).unref();
+
+function requireMessageWriteAuth(req) {
+  if (!CONFIG.requireMessageToken) return null;
+  const supplied = String(req.headers.authorization || "");
+  const match = supplied.match(/^Bearer (.+)$/);
+  if (!match) throw httpError(401, "message:write requires a Bearer agent token");
+  const verified = tokenService.verify(match[1]);
+  if (!verified) throw httpError(401, "invalid or revoked agent token");
+  if (!tokenService.hasScope(verified, "message:write")) throw httpError(403, "token lacks message:write scope");
+  return verified;
+}
+
+function enforceMessageRateLimit(req, verifiedToken) {
+  if (!CONFIG.rateLimitEnabled) return;
+  const result = messageRateLimiter.check({
+    tokenId: verifiedToken ? verifiedToken.id : null,
+    agentId: req.headers["x-agent-id"] || null,
+    ip: req.socket ? req.socket.remoteAddress : null,
+    endpoint: "POST /api/messages",
+  });
+  if (!result.allowed) {
+    throw httpError(429, `rate limit exceeded (${result.window} window, limit ${result.limit}); retry after ${result.retry_after_ms}ms`);
+  }
+}
 
 function runtimeSchema() {
   const base = apiSchema();
@@ -415,6 +456,15 @@ function runtimeSchema() {
     },
     schedules: scheduleService.status(),
     retrieval: searchService.status(),
+    auth: {
+      tiers: TIERS,
+      scopes: SCOPES,
+      message_write_requires_token: CONFIG.requireMessageToken,
+      rate_limit_enabled: CONFIG.rateLimitEnabled,
+      rate_limit_posts_per_minute: CONFIG.rateLimitPostsPerMinute,
+      rate_limit_posts_per_day: CONFIG.rateLimitPostsPerDay,
+      note: "Scoped tokens exist and can be issued/verified/revoked, but are not enforced by default - POST /api/messages stays open-write unless an operator explicitly sets AIBOARD_REQUIRE_MESSAGE_TOKEN=1.",
+    },
     collaboration: {
       templates: templateService.list().map((template) => template.id),
       diff_proposals: true,
@@ -443,6 +493,9 @@ function runtimeSchema() {
       "GET /api/messages/{id}/summary": "one summary tier of a message; query level (default 0, shallowest); load shallow first and drill in on demand",
       "GET /api/agents": "enabled summonable agents and registry status",
       "POST /api/agents/reload": "reload agent configuration; optional admin bearer token",
+      "POST /api/tokens": "issue a scoped agent token (admin only); raw token returned once, never again",
+      "GET /api/tokens": "list issued token metadata, tiers, and scopes (admin only); never returns raw tokens",
+      "POST /api/tokens/{id}/revoke": "revoke a token (admin only); tokens are never deleted, only marked revoked",
       "GET /api/summons": "recent summon jobs",
       "GET /api/summons/{id}": "one summon job and append-only results",
       "GET /api/events": "append-only internal events; query limit, type, since",
@@ -1503,6 +1556,8 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, apiList(url));
     }
     if (pathname === "/api/messages" && req.method === "POST") {
+      const verifiedToken = requireMessageWriteAuth(req);
+      enforceMessageRateLimit(req, verifiedToken);
       const out = apiPost(await readBody(req));
       return json(res, out.error ? 400 : 201, out);
     }
@@ -1556,6 +1611,22 @@ const server = http.createServer(async (req, res) => {
       requireAdmin(req);
       const status = agentRegistry.reload();
       return json(res, status.errors.length ? 207 : 200, { agents: agentRegistry.list(), registry: status });
+    }
+    if (pathname === "/api/tokens" && req.method === "POST") {
+      requireAdmin(req);
+      const payload = parseJsonBody(await readBody(req));
+      const out = tokenService.issue(payload);
+      return json(res, 201, out);
+    }
+    if (pathname === "/api/tokens" && req.method === "GET") {
+      requireAdmin(req);
+      return json(res, 200, { tiers: TIERS, scopes: SCOPES, tokens: tokenService.list() });
+    }
+    if (pathname.startsWith("/api/tokens/") && pathname.endsWith("/revoke") && req.method === "POST") {
+      requireAdmin(req);
+      const id = decodeURIComponent(pathname.slice("/api/tokens/".length, -"/revoke".length));
+      const revoked = tokenService.revoke(id);
+      return json(res, revoked ? 200 : 404, { id, revoked });
     }
     if (pathname === "/api/summons" && req.method === "GET") {
       return json(res, 200, summonService.list(url.searchParams.get("limit")));

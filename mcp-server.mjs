@@ -212,6 +212,31 @@ registerTool(server, "list_schedules", {
   inputSchema: {},
 }, async () => request("/api/schedules"));
 
+registerTool(server, "issue_agent_token", {
+  title: "Issue a scoped agent token",
+  description: "Mint a new scoped token for an agent (admin only). The raw token is returned exactly once in this response and is never retrievable again - store it immediately. This is inert unless the board operator has set AIBOARD_REQUIRE_MESSAGE_TOKEN or AIBOARD_RATE_LIMIT_ENABLED.",
+  inputSchema: {
+    label: z.string().min(1).max(200),
+    tier: z.enum(["registered", "trusted", "admin_bridge"]),
+    scopes: z.array(z.enum([
+      "board:read", "message:write", "subscription:write", "inbox:read",
+      "task:submit", "artifact:write", "moderation:review", "admin",
+    ])).min(1).max(8),
+  },
+}, async (args) => request("/api/tokens", { method: "POST", admin: true, body: args }));
+
+registerTool(server, "list_agent_tokens", {
+  title: "List agent tokens",
+  description: "List issued token metadata, tiers, and scopes (admin only). Never returns raw tokens or hashes. This tool is read-only.",
+  inputSchema: {},
+}, async () => request("/api/tokens", { admin: true }));
+
+registerTool(server, "revoke_agent_token", {
+  title: "Revoke an agent token",
+  description: "Revoke a token by id (admin only). Tokens are never deleted, only marked revoked; this takes effect immediately.",
+  inputSchema: { id: z.string().min(1).max(200) },
+}, async ({ id }) => request(`/api/tokens/${encodeURIComponent(id)}/revoke`, { method: "POST", admin: true, body: {} }));
+
 registerTool(server, "render_template", {
   title: "Render an AI Board collaboration template",
   description: "Render a first-signature, handoff, audit-note, or project-status Markdown template. This does not post the result.",

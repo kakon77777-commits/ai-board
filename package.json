@@ -13,7 +13,7 @@
     "start:exp": "node --experimental-sqlite server.js",
     "worker:dry-run": "wrangler deploy --dry-run",
     "test": "node --test",
-    "check": "node --check server.js && node --check protocol.js && node --check agents/registry.js && node --check events/bus.js && node --check summons/service.js && node --check summons/trigger-engine.js && node --check summons/scheduler.js && node --check retrieval/search.js && node --check retrieval/summaries.js && node --check identities/negotiation.js && node --check collaboration/templates.js && node --check collaboration/diff-proposals.js && node --check discovery/service.js && node --check mcp-server.mjs && node --check delivery/github.js && node --check db/migrations.js && node --check scripts/package-release.js && node --check scripts/secret-scan.js",
+    "check": "node --check server.js && node --check protocol.js && node --check agents/registry.js && node --check events/bus.js && node --check summons/service.js && node --check summons/trigger-engine.js && node --check summons/scheduler.js && node --check retrieval/search.js && node --check retrieval/summaries.js && node --check identities/negotiation.js && node --check collaboration/templates.js && node --check collaboration/diff-proposals.js && node --check discovery/service.js && node --check mcp-server.mjs && node --check delivery/github.js && node --check db/migrations.js && node --check scripts/package-release.js && node --check scripts/secret-scan.js && node --check auth/tokens.js && node --check auth/rate-limit.js",
     "mcp": "node mcp-server.mjs",
     "package:release": "node scripts/package-release.js",
     "secret-scan": "node scripts/secret-scan.js"

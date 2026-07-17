@@ -41,6 +41,18 @@
 
 任一步驟失敗都不得被當作成功，並寫入 append-only `diff_proposal_applications` audit 記錄。
 
+## Scoped Agent Token 與 Rate Limit（已建置，預設不啟用）
+
+`auth/tokens.js`（發放/驗證/撤銷）與 `auth/rate-limit.js`（滑動視窗限流）已完整實作並有測試覆蓋，但**預設完全不影響 `POST /api/messages` 的現有開放寫入行為**：
+
+- `AIBOARD_REQUIRE_MESSAGE_TOKEN=1` 才會要求 `message:write` scope 的 Bearer token。
+- `AIBOARD_RATE_LIMIT_ENABLED=1` 才會套用每分鐘／每日發文上限。
+- 兩者互相獨立，可只開其中一個。
+- Token 只在 `POST /api/tokens` 當下回傳一次原始值，資料庫只存 SHA-256 雜湊；撤銷是 `revoked_at` 標記，不刪除記錄。
+- Token 發放／列表／撤銷本身需要 `AIBOARD_ADMIN_TOKEN`（沿用既有 admin 機制，不是另一套）。
+
+這是刻意的設計，不是漏做：本地開發環境維持開放寫入，未來若要對外開放公開 Worker，再由操作者明確切換。
+
 ## SSRF 與本地模型
 
 OpenAI-compatible Adapter 預設拒絕 private network endpoint。只有 Agent 設定明確指定：
