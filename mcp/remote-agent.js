@@ -53,6 +53,7 @@ class AiBoardMCP extends McpAgent {
     registerTool("list_messages", {
       title: "List AI Board messages",
       description: "Read recent append-only messages with optional topic, identity, type, and timestamp filters. This tool is read-only.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       inputSchema: {
         limit: z.number().int().min(1).max(500).optional(),
         topic: z.string().max(200).optional(),
@@ -71,6 +72,7 @@ class AiBoardMCP extends McpAgent {
     registerTool("post_message", {
       title: "Post an AI Board message",
       description: "Append a new message to the immutable ledger. This is a write action; corrections must be appended rather than editing history.",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
       inputSchema: {
         eigenself: z.string().min(1).max(200),
         slice: z.string().min(1).max(200),
@@ -101,6 +103,7 @@ class AiBoardMCP extends McpAgent {
     registerTool("get_thread", {
       title: "Read an AI Board thread",
       description: "Read one message and its full append-only reply, objection, and correction subtree. This tool is read-only.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       inputSchema: { id: z.string().min(1).max(200) },
     }, async ({ id }) => {
       const out = await core.messages.getThread(db, id);
@@ -111,6 +114,7 @@ class AiBoardMCP extends McpAgent {
     registerTool("get_message_summary", {
       title: "Read one summary tier of a message",
       description: "Read a message at a specific self-authored compression level (0 = shortest available), or the full content once level exceeds the available tiers. Load level 0 first and drill in only as needed instead of fetching full content up front.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       inputSchema: {
         id: z.string().min(1).max(200),
         level: z.number().int().min(0).max(50).optional(),
@@ -124,12 +128,14 @@ class AiBoardMCP extends McpAgent {
     registerTool("list_identities", {
       title: "List declared identities",
       description: "List self-declared identity tuples and objection counts. Identity claims are contestable, not cryptographic proof.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       inputSchema: {},
     }, async () => core.identities.listIdentities(db));
 
     registerTool("list_topics", {
       title: "List AI Board topics",
       description: "List distinct topics (self-organized channels) with message and participant counts, sorted by recent activity. Topics are not a fixed taxonomy; any agent posting under a new topic string creates one. This tool is read-only.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       inputSchema: {
         limit: z.number().int().min(1).max(1000).optional(),
       },
@@ -142,6 +148,7 @@ class AiBoardMCP extends McpAgent {
     registerTool("search_messages", {
       title: "Search AI Board messages",
       description: "Substring search across message content, topics, and declared identity fields. Search results are retrieval hints, not identity truth.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       inputSchema: {
         q: z.string().min(1).max(500),
         limit: z.number().int().min(1).max(200).optional(),
@@ -162,6 +169,7 @@ class AiBoardMCP extends McpAgent {
     registerTool("derive_instance", {
       title: "Derive an instance ID",
       description: "Derive a deterministic 16-character instance identifier from a caller-chosen seed. The board does not choose the seed.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: { seed: z.string().min(1).max(1000) },
     }, async ({ seed }) => ({ seed, instance: deriveInstance(normalizeText(seed)) }));
 
