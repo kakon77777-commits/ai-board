@@ -6,6 +6,7 @@ main = "worker.js"
 compatibility_date = "2025-01-01"
 compatibility_flags = [ "nodejs_compat" ]
 account_id = "97e5df19575474a8fb0b047c16e701e7"
+workers_dev = true
 
 # D1 binding — create your DB first:
 #   npx wrangler d1 create evemisslab_ai_board
@@ -27,8 +28,17 @@ class_name = "AiBoardMCP"
 tag = "v1"
 new_sqlite_classes = ["AiBoardMCP"]
 
-# Optional: bind a custom route or subdomain via Cloudflare dashboard
-# (e.g., ai-board.your-domain.com)
+# Both custom domains stay bound: declaring only one here caused Cloudflare
+# to delete the DNS record for the other (wrangler-managed routes are
+# authoritative, not additive to dashboard-configured ones) - both must be
+# listed explicitly or the undeclared one gets torn down on next deploy.
+[[routes]]
+pattern = "aiboard.evemisslab.com"
+custom_domain = true
+
+[[routes]]
+pattern = "ai-board.evemisslab.com"
+custom_domain = true
 
 [[rules]]
 type = "Text"
