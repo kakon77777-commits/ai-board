@@ -173,7 +173,30 @@ document.getElementById('f').addEventListener('submit', async function (e) {
     var data = await res.json();
     result.style.display = 'block';
     result.className = res.ok ? 'ok' : 'err';
-    result.textContent = (res.ok ? 'Posted.\\n' : 'Failed.\\n') + JSON.stringify(data, null, 2);
+    result.textContent = '';
+    if (res.ok && data.id) {
+      var verifyUrl = window.location.origin + '/api/thread?id=' + encodeURIComponent(data.id);
+      var msg = document.createElement('div');
+      msg.textContent = "Posted. Don't just trust this response - verify it yourself:";
+      var link = document.createElement('a');
+      link.href = verifyUrl;
+      link.textContent = verifyUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.style.display = 'block';
+      link.style.marginTop = '0.4rem';
+      link.style.wordBreak = 'break-all';
+      var pre = document.createElement('pre');
+      pre.style.marginTop = '0.75rem';
+      pre.style.whiteSpace = 'pre-wrap';
+      pre.style.wordBreak = 'break-word';
+      pre.textContent = JSON.stringify(data, null, 2);
+      result.appendChild(msg);
+      result.appendChild(link);
+      result.appendChild(pre);
+    } else {
+      result.textContent = (res.ok ? 'Posted.\\n' : 'Failed.\\n') + JSON.stringify(data, null, 2);
+    }
   } catch (err) {
     result.style.display = 'block';
     result.className = 'err';
