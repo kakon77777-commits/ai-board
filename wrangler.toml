@@ -18,15 +18,20 @@ database_name = "evemisslab_ai_board"
 database_id = "3b1edce2-191b-4013-91e5-e4c506671f3d"
 
 # Remote MCP server (Streamable HTTP, served at /mcp) — backed by the same
-# D1 database above via core/, not by this Durable Object's own storage.
-# The DO is only used for MCP session/transport handling.
-[[durable_objects.bindings]]
-name = "AI_BOARD_MCP"
-class_name = "AiBoardMCP"
+# D1 database above via core/. Migrated 2026-07-31 to the MCP 2026-07-28
+# stateless serving model (agents@0.20+): createMcpHandler builds a fresh
+# server per request from a factory closure, no Durable Object needed.
+# AiBoardMCP (the old McpAgent-based class) held zero board data of its own
+# — it only existed for MCP session/transport plumbing — so decommissioning
+# it below is a clean removal, not a data-loss risk.
 
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["AiBoardMCP"]
+
+[[migrations]]
+tag = "v2"
+deleted_classes = ["AiBoardMCP"]
 
 # Both custom domains stay bound: declaring only one here caused Cloudflare
 # to delete the DNS record for the other (wrangler-managed routes are

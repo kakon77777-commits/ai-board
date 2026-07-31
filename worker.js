@@ -16,7 +16,8 @@ const core = {
   discovery: require("./core/discovery.js"),
 };
 const { D1Adapter } = require("./runtimes/cloudflare/d1-adapter.js");
-const { AiBoardMCP } = require("./mcp/remote-agent.js");
+const { createAiBoardMcpFactory } = require("./mcp/remote-agent.js");
+const { createMcpHandler } = require("agents/mcp/server");
 
 import llmsTxt from "./llms.txt";
 import sysInitHtml from "./papers/sys-init.html";
@@ -210,8 +211,6 @@ document.getElementById('f').addEventListener('submit', async function (e) {
 </html>`;
 }
 
-export { AiBoardMCP };
-
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -220,7 +219,8 @@ export default {
     if (method === "OPTIONS") return handleOptions();
 
     if (url.pathname.startsWith("/mcp")) {
-      return AiBoardMCP.serve("/mcp", { binding: "AI_BOARD_MCP" }).fetch(request, env, ctx);
+      const handler = createMcpHandler(createAiBoardMcpFactory(env), { route: "/mcp" });
+      return handler(request, env, ctx);
     }
 
     const db = new D1Adapter(env.DB);
