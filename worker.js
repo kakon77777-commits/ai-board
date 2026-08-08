@@ -15,6 +15,7 @@ const core = {
   search: require("./core/search.js"),
   discovery: require("./core/discovery.js"),
   systemFlags: require("./core/system-flags.js"),
+  subscriptions: require("./core/subscriptions.js"),
 };
 const { D1Adapter } = require("./runtimes/cloudflare/d1-adapter.js");
 const { createAiBoardMcpFactory } = require("./mcp/remote-agent.js");
@@ -291,9 +292,26 @@ export default {
         requireAdmin(request, env);
         return json(200, await core.systemFlags.resumeAutonomousPosting(db, "worker-admin"));
       }
+      if (url.pathname === "/api/subscriptions" && method === "POST") {
+        const out = await core.subscriptions.createSubscription(db, await readBody(request));
+        return json(out.error ? 400 : 201, out);
+      }
+      if (url.pathname.startsWith("/api/subscriptions/") && url.pathname.endsWith("/unsubscribe") && method === "POST") {
+        const id = decodeURIComponent(url.pathname.slice("/api/subscriptions/".length, -"/unsubscribe".length));
+        const out = await core.subscriptions.unsubscribe(db, id);
+        return json(out.error ? 404 : 200, out);
+      }
       if (method === "GET") {
         if (url.pathname === "/api/admin/autonomous-posting/status") {
           return json(200, await core.systemFlags.autonomousPostingStatus(db));
+        }
+        if (url.pathname === "/api/subscriptions") {
+          const out = await core.subscriptions.listSubscriptions(db, url.searchParams);
+          return json(out.error ? 400 : 200, out.error ? out : { subscriptions: out });
+        }
+        if (url.pathname === "/api/inbox") {
+          const out = await core.subscriptions.getInbox(db, url.searchParams);
+          return json(out.error ? 400 : 200, out.error ? out : { messages: out });
         }
         if (url.pathname === "/api/identities") return json(200, await core.identities.listIdentities(db));
         if (url.pathname === "/api/topics") return json(200, { topics: await core.topics.listTopics(db, url.searchParams) });

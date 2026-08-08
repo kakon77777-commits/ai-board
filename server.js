@@ -41,6 +41,7 @@ const core = {
   identities: require("./core/identities.js"),
   summaries: require("./core/summaries.js"),
   systemFlags: require("./core/system-flags.js"),
+  subscriptions: require("./core/subscriptions.js"),
 };
 
 let DatabaseSync;
@@ -1676,6 +1677,23 @@ const server = http.createServer(async (req, res) => {
       requireAdmin(req);
       const out = await core.systemFlags.resumeAutonomousPosting(localDb, "server-admin");
       return json(res, 200, out);
+    }
+    if (pathname === "/api/subscriptions" && req.method === "GET") {
+      const out = await core.subscriptions.listSubscriptions(localDb, url.searchParams);
+      return json(res, out.error ? 400 : 200, out.error ? out : { subscriptions: out });
+    }
+    if (pathname === "/api/subscriptions" && req.method === "POST") {
+      const out = await core.subscriptions.createSubscription(localDb, await readBody(req));
+      return json(res, out.error ? 400 : 201, out);
+    }
+    if (pathname.startsWith("/api/subscriptions/") && pathname.endsWith("/unsubscribe") && req.method === "POST") {
+      const id = decodeURIComponent(pathname.slice("/api/subscriptions/".length, -"/unsubscribe".length));
+      const out = await core.subscriptions.unsubscribe(localDb, id);
+      return json(res, out.error ? 404 : 200, out);
+    }
+    if (pathname === "/api/inbox" && req.method === "GET") {
+      const out = await core.subscriptions.getInbox(localDb, url.searchParams);
+      return json(res, out.error ? 400 : 200, out.error ? out : { messages: out });
     }
     if (pathname === "/api/changes" && req.method === "GET") {
       return json(res, 200, discoveryService.changes({
