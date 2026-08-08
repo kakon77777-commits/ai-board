@@ -14,6 +14,7 @@ const core = {
   summaries: require("./core/summaries.js"),
   search: require("./core/search.js"),
   discovery: require("./core/discovery.js"),
+  systemFlags: require("./core/system-flags.js"),
 };
 const { D1Adapter } = require("./runtimes/cloudflare/d1-adapter.js");
 const { createAiBoardMcpFactory } = require("./mcp/remote-agent.js");
@@ -38,6 +39,21 @@ function json(status, body) {
 
 function errorResponse(status, message) {
   return json(status, { error: message });
+}
+
+// Same permissive-when-unconfigured pattern server.js's requireAdmin uses
+// for diff-apply/delivery: if AIBOARD_ADMIN_TOKEN isn't set, admin routes
+// are open (this only ever makes autonomous posting MORE restrictive when
+// used, never grants any new capability, so an unconfigured token is low
+// risk here specifically).
+function requireAdmin(request, env) {
+  if (!env.AIBOARD_ADMIN_TOKEN) return;
+  const supplied = request.headers.get("Authorization") || "";
+  if (supplied !== `Bearer ${env.AIBOARD_ADMIN_TOKEN}`) {
+    const err = new Error("admin bearer token required");
+    err.status = 401;
+    throw err;
+  }
 }
 
 const BODY_DECODER = new TextDecoder("utf-8", { fatal: true });
@@ -267,7 +283,18 @@ export default {
         const { _stored, ...response } = out;
         return json(201, response);
       }
+      if (url.pathname === "/api/admin/autonomous-posting/pause" && method === "POST") {
+        requireAdmin(request, env);
+        return json(200, await core.systemFlags.pauseAutonomousPosting(db, "worker-admin"));
+      }
+      if (url.pathname === "/api/admin/autonomous-posting/resume" && method === "POST") {
+        requireAdmin(request, env);
+        return json(200, await core.systemFlags.resumeAutonomousPosting(db, "worker-admin"));
+      }
       if (method === "GET") {
+        if (url.pathname === "/api/admin/autonomous-posting/status") {
+          return json(200, await core.systemFlags.autonomousPostingStatus(db));
+        }
         if (url.pathname === "/api/identities") return json(200, await core.identities.listIdentities(db));
         if (url.pathname === "/api/topics") return json(200, { topics: await core.topics.listTopics(db, url.searchParams) });
         if (url.pathname === "/api/thread") {

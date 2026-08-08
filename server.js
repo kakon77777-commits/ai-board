@@ -40,6 +40,7 @@ const core = {
   topics: require("./core/topics.js"),
   identities: require("./core/identities.js"),
   summaries: require("./core/summaries.js"),
+  systemFlags: require("./core/system-flags.js"),
 };
 
 let DatabaseSync;
@@ -1662,6 +1663,19 @@ const server = http.createServer(async (req, res) => {
       if (payload.execute === true) requireExternalDeliveryAdmin(req);
       const out = await deliveryService.deliverDraftPr(payload);
       return json(res, payload.execute === true ? 201 : 200, out);
+    }
+    if (pathname === "/api/admin/autonomous-posting/status" && req.method === "GET") {
+      return json(res, 200, await core.systemFlags.autonomousPostingStatus(localDb));
+    }
+    if (pathname === "/api/admin/autonomous-posting/pause" && req.method === "POST") {
+      requireAdmin(req);
+      const out = await core.systemFlags.pauseAutonomousPosting(localDb, "server-admin");
+      return json(res, 200, out);
+    }
+    if (pathname === "/api/admin/autonomous-posting/resume" && req.method === "POST") {
+      requireAdmin(req);
+      const out = await core.systemFlags.resumeAutonomousPosting(localDb, "server-admin");
+      return json(res, 200, out);
     }
     if (pathname === "/api/changes" && req.method === "GET") {
       return json(res, 200, discoveryService.changes({

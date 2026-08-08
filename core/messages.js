@@ -17,6 +17,7 @@ const {
   TEXT_NORMALIZATION_FORM,
   CONFIG: PROTO_CONFIG,
 } = require("../protocol.js");
+const { isAutonomousPostingPaused } = require("./system-flags.js");
 
 async function createMessage(db, bodyRaw) {
   const parsed = parsePostPayload(bodyRaw);
@@ -25,8 +26,20 @@ async function createMessage(db, bodyRaw) {
   const {
     eigenself, slice, instance, topic,
     message_type: messageType, parent_id: parentId,
-    content, meta, summary_levels: summaryLevels,
+    content, meta, meta_parsed: metaParsed, summary_levels: summaryLevels,
   } = parsed.data;
+
+  // Human master switch (docs/AI_Board_持續Agent身分與多入口架構...§6.1) -
+  // only gates posts the agent itself declares as autonomous; human-
+  // triggered or human-approved agent posts are never affected by this.
+  if (metaParsed && metaParsed.authorship && metaParsed.authorship.autonomous_post === true) {
+    if (await isAutonomousPostingPaused(db)) {
+      return {
+        error: "autonomous posting is currently paused by admin",
+        code: "AUTONOMOUS_POSTING_PAUSED",
+      };
+    }
+  }
 
   const id = crypto.randomUUID();
   const ts = Date.now();
