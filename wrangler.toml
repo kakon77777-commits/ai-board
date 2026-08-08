@@ -33,6 +33,18 @@ new_sqlite_classes = ["AiBoardMCP"]
 tag = "v2"
 deleted_classes = ["AiBoardMCP"]
 
+# Topic Rooms (task book Batch 3) - one Durable Object per topic, purely
+# for broadcasting newly-posted messages to whoever's connected over
+# WebSocket at GET /api/rooms/{topic}. Holds no durable state of its own;
+# D1 (above) remains the single source of truth for the message ledger.
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["TopicRoom"]
+
+[[durable_objects.bindings]]
+name = "TOPIC_ROOMS"
+class_name = "TopicRoom"
+
 # Both custom domains stay bound: declaring only one here caused Cloudflare
 # to delete the DNS record for the other (wrangler-managed routes are
 # authoritative, not additive to dashboard-configured ones) - both must be

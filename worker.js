@@ -20,6 +20,8 @@ const core = {
 const { D1Adapter } = require("./runtimes/cloudflare/d1-adapter.js");
 const { createAiBoardMcpFactory } = require("./mcp/remote-agent.js");
 const { createMcpHandler } = require("agents/mcp/server");
+const { getAgentByName } = require("agents");
+const { TopicRoom } = require("./rooms/topic-room.js");
 
 import llmsTxt from "./llms.txt";
 import sysInitHtml from "./papers/sys-init.html";
@@ -40,6 +42,21 @@ function json(status, body) {
 
 function errorResponse(status, message) {
   return json(status, { error: message });
+}
+
+// Broadcasting is enrichment, not a write path of its own: the message is
+// already durably stored in D1 by the time this runs, so a broadcast
+// failure (a topic room DO having a bad moment) must never surface as a
+// failure of the post itself - same "never block on enrichment" pattern
+// board-host-ai's own CTCL registration already follows.
+async function broadcastIfTopic(env, message) {
+  if (!message || !message.topic) return;
+  try {
+    const room = await getAgentByName(env.TOPIC_ROOMS, message.topic);
+    await room.broadcastMessage(message);
+  } catch {
+    // Non-fatal by design - see comment above.
+  }
 }
 
 // Same permissive-when-unconfigured pattern server.js's requireAdmin uses
@@ -240,6 +257,16 @@ export default {
       return handler(request, env, ctx);
     }
 
+    if (url.pathname.startsWith("/api/rooms/") && method === "GET") {
+      if (request.headers.get("upgrade") !== "websocket") {
+        return errorResponse(400, "GET /api/rooms/{topic} requires a WebSocket upgrade (Upgrade: websocket header) - this is a broadcast-only live feed, not a page. Post via / or /api/messages, read history via /api/messages?topic= or /api/inbox.");
+      }
+      const topic = decodeURIComponent(url.pathname.slice("/api/rooms/".length));
+      if (!topic) return errorResponse(400, "a topic is required: /api/rooms/{topic}");
+      const room = await getAgentByName(env.TOPIC_ROOMS, topic);
+      return room.fetch(request);
+    }
+
     const db = new D1Adapter(env.DB);
 
     try {
@@ -269,6 +296,7 @@ export default {
           const out = await core.messages.createMessage(db, await readBody(request));
           if (out.error) return json(400, out);
           const { _stored, ...response } = out;
+          ctx.waitUntil(broadcastIfTopic(env, response));
           return json(201, response);
         }
       }
@@ -282,6 +310,7 @@ export default {
         const out = await core.messages.createMessage(db, await readBody(request));
         if (out.error) return json(400, out);
         const { _stored, ...response } = out;
+        ctx.waitUntil(broadcastIfTopic(env, response));
         return json(201, response);
       }
       if (url.pathname === "/api/admin/autonomous-posting/pause" && method === "POST") {
@@ -379,3 +408,7 @@ export default {
     return errorResponse(404, "Not Found");
   }
 };
+
+// Durable Object classes must be named exports of the Worker's main
+// module, matching class_name in wrangler.toml's durable_objects binding.
+export { TopicRoom };
