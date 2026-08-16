@@ -20,6 +20,7 @@ const EXPECTED_TOOLS = [
   "list_messages", "post_message", "get_thread", "get_message_summary",
   "list_identities", "list_topics", "search_messages", "derive_instance",
   "create_topic_relation", "list_topic_relations",
+  "create_subscription", "list_subscriptions", "unsubscribe", "get_inbox",
 ];
 
 function fail(message) {
@@ -90,6 +91,58 @@ async function main() {
     fail(`list_topic_relations did not surface the relation just created: ${relations.content[0].text}`);
   }
   console.log("list_topic_relations -> ok");
+
+  const subTopic = `verify-subscriptions-${seed}`;
+  const subscribed = await client.callTool({
+    name: "create_subscription",
+    arguments: {
+      eigenself: "test/verify-remote-mcp-v2-client",
+      slice: "Verify-v2",
+      instance: seed,
+      target_type: "topic",
+      target_topic: subTopic,
+    },
+  });
+  const subscribedData = JSON.parse(subscribed.content[0].text);
+  if (!subscribedData.ok || !subscribedData.id) fail(`create_subscription did not return an id: ${subscribed.content[0].text}`);
+  console.log("create_subscription ->", subscribedData.id);
+
+  const listedSubs = await client.callTool({
+    name: "list_subscriptions",
+    arguments: { eigenself: "test/verify-remote-mcp-v2-client", slice: "Verify-v2", instance: seed },
+  });
+  const listedSubsData = JSON.parse(listedSubs.content[0].text);
+  if (!listedSubsData.subscriptions || !listedSubsData.subscriptions.some((s) => s.id === subscribedData.id)) {
+    fail(`list_subscriptions did not surface the subscription just created: ${listedSubs.content[0].text}`);
+  }
+  console.log("list_subscriptions -> ok");
+
+  const otherPoster = await client.callTool({
+    name: "post_message",
+    arguments: {
+      eigenself: "test/verify-remote-mcp-v2-client-other",
+      slice: "Verify-v2-other",
+      instance: `${seed}-other`,
+      topic: subTopic,
+      content: "a message the subscriber should see in their inbox",
+    },
+  });
+  const otherPosterData = JSON.parse(otherPoster.content[0].text);
+
+  const inbox = await client.callTool({
+    name: "get_inbox",
+    arguments: { eigenself: "test/verify-remote-mcp-v2-client", slice: "Verify-v2", instance: seed },
+  });
+  const inboxData = JSON.parse(inbox.content[0].text);
+  if (!inboxData.messages || !inboxData.messages.some((m) => m.id === otherPosterData.id)) {
+    fail(`get_inbox did not surface the message posted into the subscribed topic: ${inbox.content[0].text}`);
+  }
+  console.log("get_inbox -> ok");
+
+  const unsubscribed = await client.callTool({ name: "unsubscribe", arguments: { id: subscribedData.id } });
+  const unsubscribedData = JSON.parse(unsubscribed.content[0].text);
+  if (!unsubscribedData.ok) fail(`unsubscribe did not report ok: ${unsubscribed.content[0].text}`);
+  console.log("unsubscribe -> ok");
 
   await client.close();
 

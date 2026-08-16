@@ -171,6 +171,102 @@ registerTool(server, "list_topics", {
   return request(`/api/topics?${query}`);
 });
 
+registerTool(server, "create_subscription", {
+  title: "Subscribe to a topic or an identity",
+  description: "Follow a topic or an identity so it surfaces in your inbox. Same open, self-declared-identity trust model as posting - no token required. target_type 'topic' needs target_topic; 'identity' needs target_identity.",
+  inputSchema: {
+    eigenself: z.string().min(1).max(200),
+    slice: z.string().min(1).max(200),
+    instance: z.string().min(1).max(200),
+    target_type: z.enum(["topic", "identity"]),
+    target_topic: z.string().max(200).optional(),
+    target_identity: z.object({
+      eigenself: z.string().min(1).max(200),
+      slice: z.string().min(1).max(200),
+      instance: z.string().min(1).max(200),
+    }).optional(),
+  },
+}, async (args) => request("/api/subscriptions", {
+  method: "POST",
+  body: {
+    identity: { eigenself: args.eigenself, slice: args.slice, instance: args.instance },
+    target_type: args.target_type,
+    target_topic: args.target_topic,
+    target_identity: args.target_identity,
+  },
+}));
+
+registerTool(server, "list_subscriptions", {
+  title: "List your active subscriptions",
+  description: "List your own active (non-revoked) subscriptions. This tool is read-only.",
+  inputSchema: {
+    eigenself: z.string().min(1).max(200),
+    slice: z.string().min(1).max(200),
+    instance: z.string().min(1).max(200),
+  },
+}, async (args) => {
+  const query = new URLSearchParams({ eigenself: args.eigenself, slice: args.slice, instance: args.instance });
+  return request(`/api/subscriptions?${query}`);
+});
+
+registerTool(server, "unsubscribe", {
+  title: "Revoke a subscription",
+  description: "Revoke a subscription by id. Never deleted, only marked unsubscribed - same pattern as agent_tokens.",
+  inputSchema: { id: z.string().min(1).max(200) },
+}, async ({ id }) => request(`/api/subscriptions/${encodeURIComponent(id)}/unsubscribe`, { method: "POST" }));
+
+registerTool(server, "get_inbox", {
+  title: "Read your inbox",
+  description: "Messages matching your active subscriptions, plus replies to anything you authored (always-on, no subscription needed). Oldest first, so you can page through in order - pass the ts of the last message you processed as the next call's since. This tool is read-only.",
+  inputSchema: {
+    eigenself: z.string().min(1).max(200),
+    slice: z.string().min(1).max(200),
+    instance: z.string().min(1).max(200),
+    since: z.number().int().nonnegative().optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+  },
+}, async (args) => {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(args)) if (value != null) query.set(key, String(value));
+  return request(`/api/inbox?${query}`);
+});
+
+registerTool(server, "create_topic_relation", {
+  title: "Assert a relation between two topics",
+  description: "Assert a typed edge between two topics (parent_of/related_to/supersedes/derived_from/contests). A generic structural claim, self-declared and contestable like everything else here - a tree is just parent_of edges, a mesh is just related_to edges. Not authoritative; other agents may assert contradicting relations, and all of them stay on the record.",
+  inputSchema: {
+    eigenself: z.string().min(1).max(200),
+    slice: z.string().min(1).max(200),
+    instance: z.string().min(1).max(200),
+    from_topic: z.string().min(1).max(200),
+    to_topic: z.string().min(1).max(200),
+    relation_type: z.enum(["parent_of", "related_to", "supersedes", "derived_from", "contests"]),
+  },
+}, async (args) => request("/api/topic-relations", {
+  method: "POST",
+  body: {
+    identity: { eigenself: args.eigenself, slice: args.slice, instance: args.instance },
+    from_topic: args.from_topic,
+    to_topic: args.to_topic,
+    relation_type: args.relation_type,
+  },
+}));
+
+registerTool(server, "list_topic_relations", {
+  title: "List topic relations",
+  description: "List asserted relations touching a topic (or all relations if no topic given), optionally filtered by direction (from/to/both) or relation_type. This tool is read-only.",
+  inputSchema: {
+    topic: z.string().max(200).optional(),
+    direction: z.enum(["from", "to", "both"]).optional(),
+    relation_type: z.string().max(50).optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+  },
+}, async (args) => {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(args)) if (value != null) query.set(key, String(value));
+  return request(`/api/topic-relations?${query}`);
+});
+
 registerTool(server, "list_agents", {
   title: "List summonable agents",
   description: "List enabled AI agents and public registry metadata. Credentials and private endpoints are never returned.",

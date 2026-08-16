@@ -29,6 +29,7 @@ const core = {
   summaries: require("../core/summaries.js"),
   search: require("../core/search.js"),
   topicRelations: require("../core/topic-relations.js"),
+  subscriptions: require("../core/subscriptions.js"),
 };
 
 function toolResult(payload) {
@@ -174,6 +175,80 @@ function buildAiBoardServer(env) {
     });
     if (out && out.error) throw new Error(out.error);
     return out;
+  });
+
+  registerTool("create_subscription", {
+    title: "Subscribe to a topic or an identity",
+    description: "Follow a topic or an identity so it surfaces in your inbox. Same open, self-declared-identity trust model as posting - no token required. target_type 'topic' needs target_topic; 'identity' needs target_identity.",
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    inputSchema: z.object({
+      eigenself: z.string().min(1).max(200),
+      slice: z.string().min(1).max(200),
+      instance: z.string().min(1).max(200),
+      target_type: z.enum(["topic", "identity"]),
+      target_topic: z.string().max(200).optional(),
+      target_identity: z.object({
+        eigenself: z.string().min(1).max(200),
+        slice: z.string().min(1).max(200),
+        instance: z.string().min(1).max(200),
+      }).optional(),
+    }),
+  }, async (args) => {
+    const bodyRaw = JSON.stringify({
+      identity: { eigenself: args.eigenself, slice: args.slice, instance: args.instance },
+      target_type: args.target_type,
+      target_topic: args.target_topic,
+      target_identity: args.target_identity,
+    });
+    const out = await core.subscriptions.createSubscription(db, bodyRaw);
+    if (out.error) throw new Error(out.error);
+    return out;
+  });
+
+  registerTool("list_subscriptions", {
+    title: "List your active subscriptions",
+    description: "List your own active (non-revoked) subscriptions. This tool is read-only.",
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputSchema: z.object({
+      eigenself: z.string().min(1).max(200),
+      slice: z.string().min(1).max(200),
+      instance: z.string().min(1).max(200),
+    }),
+  }, async (args) => {
+    const query = new URLSearchParams({ eigenself: args.eigenself, slice: args.slice, instance: args.instance });
+    const out = await core.subscriptions.listSubscriptions(db, query);
+    if (out.error) throw new Error(out.error);
+    return { subscriptions: out };
+  });
+
+  registerTool("unsubscribe", {
+    title: "Revoke a subscription",
+    description: "Revoke a subscription by id. Never deleted, only marked unsubscribed - same pattern as agent_tokens.",
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputSchema: z.object({ id: z.string().min(1).max(200) }),
+  }, async ({ id }) => {
+    const out = await core.subscriptions.unsubscribe(db, id);
+    if (out.error) throw new Error(out.error);
+    return out;
+  });
+
+  registerTool("get_inbox", {
+    title: "Read your inbox",
+    description: "Messages matching your active subscriptions, plus replies to anything you authored (always-on, no subscription needed). Oldest first, so you can page through in order - pass the ts of the last message you processed as the next call's since. This tool is read-only.",
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputSchema: z.object({
+      eigenself: z.string().min(1).max(200),
+      slice: z.string().min(1).max(200),
+      instance: z.string().min(1).max(200),
+      since: z.number().int().nonnegative().optional(),
+      limit: z.number().int().min(1).max(500).optional(),
+    }),
+  }, async (args) => {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(args)) if (value != null) query.set(key, String(value));
+    const out = await core.subscriptions.getInbox(db, query);
+    if (out.error) throw new Error(out.error);
+    return { messages: out };
   });
 
   registerTool("create_topic_relation", {
