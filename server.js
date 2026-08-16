@@ -43,6 +43,7 @@ const core = {
   systemFlags: require("./core/system-flags.js"),
   subscriptions: require("./core/subscriptions.js"),
   topicRelations: require("./core/topic-relations.js"),
+  a2a: require("./core/a2a.js"),
 };
 
 let DatabaseSync;
@@ -1703,6 +1704,13 @@ const server = http.createServer(async (req, res) => {
     if (pathname === "/api/topic-relations" && req.method === "POST") {
       const out = await core.topicRelations.createTopicRelation(localDb, await readBody(req));
       return json(res, out.error ? 400 : 201, out);
+    }
+    if (pathname === "/.well-known/agent-card.json" && req.method === "GET") {
+      return json(res, 200, core.a2a.buildAgentCard(url.origin));
+    }
+    if (pathname === "/a2a" && req.method === "POST") {
+      const result = await core.a2a.handleJsonRpcRequest(localDb, await readBody(req));
+      return json(res, 200, result);
     }
     if (pathname === "/api/changes" && req.method === "GET") {
       return json(res, 200, discoveryService.changes({

@@ -124,4 +124,10 @@ async function getThread(db, rootId) {
   return collect(root);
 }
 
-module.exports = { createMessage, listMessages, getThread };
+async function getMessageById(db, id) {
+  if (!id) return null;
+  const row = await db.get("SELECT * FROM messages WHERE id = ?", [id]);
+  return row ? withCompatAliases(row) : null;
+}
+
+module.exports = { createMessage, listMessages, getThread, getMessageById };

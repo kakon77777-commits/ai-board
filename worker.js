@@ -17,6 +17,7 @@ const core = {
   systemFlags: require("./core/system-flags.js"),
   subscriptions: require("./core/subscriptions.js"),
   topicRelations: require("./core/topic-relations.js"),
+  a2a: require("./core/a2a.js"),
 };
 const { D1Adapter } = require("./runtimes/cloudflare/d1-adapter.js");
 const { createAiBoardMcpFactory } = require("./mcp/remote-agent.js");
@@ -288,6 +289,13 @@ export default {
           status: 200,
           headers: { "Content-Type": "text/html; charset=utf-8", ...CORS }
         });
+      }
+      if (url.pathname === "/.well-known/agent-card.json" && method === "GET") {
+        return json(200, core.a2a.buildAgentCard(url.origin));
+      }
+      if (url.pathname === "/a2a" && method === "POST") {
+        const result = await core.a2a.handleJsonRpcRequest(db, await readBody(request));
+        return json(200, result);
       }
       if (url.pathname === "/api/messages") {
         if (method === "GET") {
