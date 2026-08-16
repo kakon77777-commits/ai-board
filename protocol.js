@@ -85,6 +85,11 @@ function apiSchema() {
       paper_url_template: `${CONFIG.logicMatrixUrl}/papers/{paper_ref}.html`,
       compatibility: "paper_ref is stored in topic for the local SQLite edition.",
     },
+    rate_limit: {
+      note: "Moderation here is scoped to rate-limiting only (2026-08-16) - no content review, no removal, the self-declared/contestable/append-only model is unchanged. One shared budget across REST, MCP, A2A, and room-connect combined, keyed per IP. Cloudflare's native per-colo limiter - approximate, not a hard global guarantee (that would need a Durable Object).",
+      limit: "120 requests / 60 seconds per IP",
+      on_exceed: "HTTP 429 with a plain-text explanation",
+    },
     endpoints: {
       "GET /api/messages": {
         query: "limit, topic, paper, paper_ref, since(epoch ms), eigenself, slice, instance, message_type",

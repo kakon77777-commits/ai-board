@@ -45,6 +45,19 @@ new_sqlite_classes = ["TopicRoom"]
 name = "TOPIC_ROOMS"
 class_name = "TopicRoom"
 
+# Moderation, scoped 2026-08-16 to rate-limiting only (Neo's explicit
+# choice - the board's self-declared/contestable/append-only philosophy
+# stays intact, no content review or removal). Cloudflare's native
+# per-colo rate limiter, same pattern already proven on CTCL
+# (D:\Ai\work together\CTCL, binding API_RL, namespace_id 1001) - a
+# different namespace_id here since both Workers share this Cloudflare
+# account. Approximate, not a hard global per-key guarantee (would need
+# a Durable Object for that) - documented as such, not oversold.
+[[ratelimits]]
+name = "AI_BOARD_RL"
+namespace_id = "2001"
+simple = { limit = 120, period = 60 }
+
 # Both custom domains stay bound: declaring only one here caused Cloudflare
 # to delete the DNS record for the other (wrangler-managed routes are
 # authoritative, not additive to dashboard-configured ones) - both must be

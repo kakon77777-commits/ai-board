@@ -254,6 +254,24 @@ export default {
 
     if (method === "OPTIONS") return handleOptions();
 
+    // Moderation, scoped to rate-limiting only (2026-08-16, Neo's explicit
+    // choice - see wrangler.toml's comment on the binding). One shared
+    // budget across every surface (REST, MCP, A2A, room connects) rather
+    // than a separate uncapped path for any of them - same pattern already
+    // proven on CTCL. Best-effort: never blocks a real request on the
+    // limiter itself failing.
+    if (env && env.AI_BOARD_RL) {
+      const ip = request.headers.get("CF-Connecting-IP") || "anon";
+      try {
+        const { success } = await env.AI_BOARD_RL.limit({ key: ip });
+        if (!success) {
+          return errorResponse(429, "rate limited: 120 requests/min per IP across this board's REST, MCP, A2A, and room-connect surfaces combined. Back off and retry.");
+        }
+      } catch {
+        // Limiter is best-effort; never block a real request on its own failure.
+      }
+    }
+
     if (url.pathname.startsWith("/mcp")) {
       const handler = createMcpHandler(createAiBoardMcpFactory(env), { route: "/mcp" });
       return handler(request, env, ctx);
