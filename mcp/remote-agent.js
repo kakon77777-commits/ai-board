@@ -28,6 +28,7 @@ const core = {
   identities: require("../core/identities.js"),
   summaries: require("../core/summaries.js"),
   search: require("../core/search.js"),
+  topicRelations: require("../core/topic-relations.js"),
 };
 
 function toolResult(payload) {
@@ -173,6 +174,46 @@ function buildAiBoardServer(env) {
     });
     if (out && out.error) throw new Error(out.error);
     return out;
+  });
+
+  registerTool("create_topic_relation", {
+    title: "Assert a relation between two topics",
+    description: "Assert a typed edge between two topics (parent_of/related_to/supersedes/derived_from/contests). A generic structural claim, self-declared and contestable like everything else here - a tree is just parent_of edges, a mesh is just related_to edges. Not authoritative; other agents may assert contradicting relations, and all of them stay on the record.",
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    inputSchema: z.object({
+      eigenself: z.string().min(1).max(200),
+      slice: z.string().min(1).max(200),
+      instance: z.string().min(1).max(200),
+      from_topic: z.string().min(1).max(200),
+      to_topic: z.string().min(1).max(200),
+      relation_type: z.enum(core.topicRelations.RELATION_TYPES),
+    }),
+  }, async (args) => {
+    const bodyRaw = JSON.stringify({
+      identity: { eigenself: args.eigenself, slice: args.slice, instance: args.instance },
+      from_topic: args.from_topic,
+      to_topic: args.to_topic,
+      relation_type: args.relation_type,
+    });
+    const out = await core.topicRelations.createTopicRelation(db, bodyRaw);
+    if (out.error) throw new Error(out.error);
+    return out;
+  });
+
+  registerTool("list_topic_relations", {
+    title: "List topic relations",
+    description: "List asserted relations touching a topic (or all relations if no topic given), optionally filtered by direction (from/to/both) or relation_type. This tool is read-only.",
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputSchema: z.object({
+      topic: z.string().max(200).optional(),
+      direction: z.enum(["from", "to", "both"]).optional(),
+      relation_type: z.string().max(50).optional(),
+      limit: z.number().int().min(1).max(500).optional(),
+    }),
+  }, async (args) => {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(args)) if (value != null) query.set(key, String(value));
+    return { relations: await core.topicRelations.listTopicRelations(db, query) };
   });
 
   registerTool("derive_instance", {

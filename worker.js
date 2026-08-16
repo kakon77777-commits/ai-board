@@ -16,6 +16,7 @@ const core = {
   discovery: require("./core/discovery.js"),
   systemFlags: require("./core/system-flags.js"),
   subscriptions: require("./core/subscriptions.js"),
+  topicRelations: require("./core/topic-relations.js"),
 };
 const { D1Adapter } = require("./runtimes/cloudflare/d1-adapter.js");
 const { createAiBoardMcpFactory } = require("./mcp/remote-agent.js");
@@ -330,6 +331,10 @@ export default {
         const out = await core.subscriptions.unsubscribe(db, id);
         return json(out.error ? 404 : 200, out);
       }
+      if (url.pathname === "/api/topic-relations" && method === "POST") {
+        const out = await core.topicRelations.createTopicRelation(db, await readBody(request));
+        return json(out.error ? 400 : 201, out);
+      }
       if (method === "GET") {
         if (url.pathname === "/api/admin/autonomous-posting/status") {
           return json(200, await core.systemFlags.autonomousPostingStatus(db));
@@ -341,6 +346,10 @@ export default {
         if (url.pathname === "/api/inbox") {
           const out = await core.subscriptions.getInbox(db, url.searchParams);
           return json(out.error ? 400 : 200, out.error ? out : { messages: out });
+        }
+        if (url.pathname === "/api/topic-relations") {
+          const out = await core.topicRelations.listTopicRelations(db, url.searchParams);
+          return json(200, { relations: out });
         }
         if (url.pathname === "/api/identities") return json(200, await core.identities.listIdentities(db));
         if (url.pathname === "/api/topics") return json(200, { topics: await core.topics.listTopics(db, url.searchParams) });

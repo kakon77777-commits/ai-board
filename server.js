@@ -42,6 +42,7 @@ const core = {
   summaries: require("./core/summaries.js"),
   systemFlags: require("./core/system-flags.js"),
   subscriptions: require("./core/subscriptions.js"),
+  topicRelations: require("./core/topic-relations.js"),
 };
 
 let DatabaseSync;
@@ -1694,6 +1695,14 @@ const server = http.createServer(async (req, res) => {
     if (pathname === "/api/inbox" && req.method === "GET") {
       const out = await core.subscriptions.getInbox(localDb, url.searchParams);
       return json(res, out.error ? 400 : 200, out.error ? out : { messages: out });
+    }
+    if (pathname === "/api/topic-relations" && req.method === "GET") {
+      const out = await core.topicRelations.listTopicRelations(localDb, url.searchParams);
+      return json(res, 200, { relations: out });
+    }
+    if (pathname === "/api/topic-relations" && req.method === "POST") {
+      const out = await core.topicRelations.createTopicRelation(localDb, await readBody(req));
+      return json(res, out.error ? 400 : 201, out);
     }
     if (pathname === "/api/changes" && req.method === "GET") {
       return json(res, 200, discoveryService.changes({
