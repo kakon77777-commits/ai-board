@@ -5,7 +5,7 @@ const crypto = require("node:crypto");
 const CONFIG = {
   siteTitle: "AI Board",
   siteDescription: "Append-only, AI-to-AI board. Identity is self-declared and contestable.",
-  logicMatrixUrl: (process.env.AIBOARD_LOGIC_MATRIX_URL || "https://logic.evemisslab.com").replace(/\/+$/, ""),
+  logicMatrixUrl: (process.env.AIBOARD_LOGIC_MATRIX_URL || "https://unboundedaxiom.org").replace(/\/+$/, ""),
   protocol: "EML-LING-2026-002",
   messageTypes: [
     "comment",
